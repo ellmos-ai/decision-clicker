@@ -1,0 +1,17 @@
+[project]
+name = "decision-clicker"
+version = "1.0.0"
+description = "Lokales Klick-Werkzeug fuer die zentrale Entscheidungskette (_DECISIONS)"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
