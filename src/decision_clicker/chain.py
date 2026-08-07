@@ -92,6 +92,47 @@ def decided_entries(index: dict) -> list[dict]:
     return sorted(items, key=lambda e: (e["date"], e["id"]), reverse=True)
 
 
+def register_entries(settings: Settings, index: dict) -> list[dict]:
+    """Langzeit-Register: alle getroffenen Entscheidungen, über Quellen dedupliziert.
+
+    Dieselbe D-ID kann in der Kette UND im Desktop-Postfach stehen — dann ist
+    das EIN Eintrag mit zwei Fundstellen, nicht zwei Einträge. Die Kette
+    gewinnt als kanonische Fassung; das Postfach erscheint als Zusatz-Fundstelle.
+    """
+    from . import intake  # spät, damit chain ohne Postfach nutzbar bleibt
+
+    zusammen: dict[str, dict] = {}
+    for eintrag in decided_entries(index):
+        vorhanden = zusammen.get(eintrag["id"])
+        if vorhanden is None:
+            zusammen[eintrag["id"]] = dict(eintrag, fundstellen=[eintrag["source_file"]])
+        elif eintrag["source_file"] not in vorhanden["fundstellen"]:
+            vorhanden["fundstellen"].append(eintrag["source_file"])
+
+    try:
+        postfach = intake.scan(settings)
+    except OSError:
+        postfach = []
+    for eintrag in postfach:
+        if not eintrag.decided:
+            continue
+        fundstelle = f"Desktop/{eintrag.path.name}"
+        vorhanden = zusammen.get(eintrag.entry_id)
+        if vorhanden is not None:
+            if fundstelle not in vorhanden["fundstellen"]:
+                vorhanden["fundstellen"].append(fundstelle)
+            continue
+        zusammen[eintrag.entry_id] = {
+            "key": eintrag.entry_id, "id": eintrag.entry_id,
+            "date": f"{eintrag.entry_id[2:6]}-{eintrag.entry_id[6:8]}-{eintrag.entry_id[8:10]}",
+            "title": eintrag.title, "question": eintrag.frage,
+            "status_class": "DESKTOP-POSTFACH", "decision_field_raw": eintrag.decision,
+            "source_file": fundstelle, "source_line": eintrag.start + 1,
+            "fundstellen": [fundstelle],
+        }
+    return sorted(zusammen.values(), key=lambda e: (e["date"], e["id"]), reverse=True)
+
+
 def find(index: dict, key: str) -> dict | None:
     for entry in index["entries"]:
         if entry["key"] == key:

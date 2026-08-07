@@ -290,6 +290,59 @@ def append_done(
     return {"file": str(path), "backup": str(backup_path) if backup_path else None}
 
 
+def append_done_block(settings: Settings, rows: list[str], *, make_backup: bool = True) -> dict:
+    """Fertigen Textblock an `DECIDED-AND-DONE.md` anhängen."""
+    path = settings.done_file
+    if not path.is_file():
+        raise WriteError(f"{path} nicht gefunden")
+    text, has_bom = _read(path)
+    newline = _newline_of(text.splitlines(keepends=True))
+    backup_path = backup(path, settings, tag="intake") if make_backup else None
+    tail = "" if text.endswith(("\n", "\r")) else newline
+    _write(path, text + tail + newline.join(rows) + newline, has_bom)
+    return {"file": str(path), "backup": str(backup_path) if backup_path else None}
+
+
+def mark_taken_over(
+    settings: Settings,
+    path: Path,
+    start: int,
+    end: int,
+    marker: str,
+    *,
+    make_backup: bool = True,
+) -> dict:
+    """Postfach-Eintrag als übernommen markieren — rein additiv.
+
+    Der Vermerk wird ans Ende des Eintragsblocks gesetzt, vor abschliessenden
+    Trennlinien und Leerzeilen. Es wird nichts geloescht und nichts
+    umformatiert; Nachzuegler-Automationen duerfen weiter ans Dateiende
+    schreiben.
+    """
+    text, has_bom = _read(path)
+    lines = text.splitlines(keepends=True)
+    if not 0 <= start < end <= len(lines):
+        raise WriteError(f"Blockgrenzen {start}:{end} passen nicht zu {path.name}")
+    newline = _newline_of(lines[start:end]) or _newline_of(lines)
+
+    einfuegen = end
+    while einfuegen > start + 1:
+        vorher = lines[einfuegen - 1].rstrip("\r\n")
+        if vorher.strip() == "" or SEPARATOR_RE.match(vorher) or re.fullmatch(r"={3,}", vorher.strip()):
+            einfuegen -= 1
+            continue
+        break
+
+    backup_path = backup(path, settings, tag="intake-mark") if make_backup else None
+    lines[einfuegen:einfuegen] = [newline, f"{marker}{newline}"]
+    _write(path, "".join(lines), has_bom)
+    return {
+        "file": str(path),
+        "line": einfuegen + 2,
+        "backup": str(backup_path) if backup_path else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Sperre
 # ---------------------------------------------------------------------------
