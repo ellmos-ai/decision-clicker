@@ -26,6 +26,21 @@ STATUS_ARCHIVED = "ARCHIVIERT"
 ID_RE = re.compile(r"D-(\d{8})-(\d{2,4})")
 PART_RE = re.compile(r"^TO-DECIDE-USER(?:_(\d+))?\.txt$", re.I)
 
+# ---------------------------------------------------------------------------
+# DECIDED-AND-DONE.md — eigenes, kleines Lesewerkzeug fuer den Verlauf.
+#
+# Kein zweiter Kettenparser: `decisions_index.py` liest die TO-DECIDE-Kette
+# UND das DONE-Register, aber sein Feldmuster fuer "entscheidung" verlangt
+# "ENTSCHEIDUNG DES USERS" -- genau der Text, den `writer.append_done()`
+# NICHT schreibt (dort steht nur "ENTSCHEIDUNG:"). Fuer den Verlauf wird
+# deshalb das eigene, feste Format gelesen, das dieses Paket selbst erzeugt.
+# ---------------------------------------------------------------------------
+DONE_HEADING_RE = re.compile(r"^##\s+(D-\d{8}-\d{2,4})\b\s*(?:[—–]|--)?\s*(.*)$")
+CLICKER_DECIDED_AT_RE = re.compile(r"^ENTSCHIEDEN\s+AM\s*:\s*(\S+)\s*\(decision-clicker\)\s*$", re.I)
+DONE_DECISION_VALUE_RE = re.compile(r"^ENTSCHEIDUNG\s*:\s*(.*)$", re.I)
+DONE_QUELLE_RE = re.compile(r"^QUELLE\s+IN\s+DER\s+KETTE\s*:\s*`([^`]+)`\s*,\s*Zeile\s*(\d+)\s*$", re.I)
+DONE_RESET_RE = re.compile(r"^ZUR[UÜ]CKGESETZT\s+AM\s*:\s*(\S+)\s*\(([^)]*)\)", re.I)
+
 
 class ChainError(RuntimeError):
     """Die Kette ist nicht lesbar — nie stillschweigend uebergehen."""
@@ -131,6 +146,59 @@ def register_entries(settings: Settings, index: dict) -> list[dict]:
             "fundstellen": [fundstelle],
         }
     return sorted(zusammen.values(), key=lambda e: (e["date"], e["id"]), reverse=True)
+
+
+def _done_blocks(text: str) -> list[tuple[str, str, list[str]]]:
+    """(id, titel, textzeilen) je Ueberschrift `## D-...` in DECIDED-AND-DONE.md."""
+    lines = text.splitlines()
+    heads: list[tuple[int, str, str]] = []
+    for number, line in enumerate(lines):
+        match = DONE_HEADING_RE.match(line)
+        if match:
+            heads.append((number, match.group(1), match.group(2).strip()))
+    blocks: list[tuple[str, str, list[str]]] = []
+    for index, (number, entry_id, title) in enumerate(heads):
+        end = heads[index + 1][0] if index + 1 < len(heads) else len(lines)
+        blocks.append((entry_id, title, lines[number + 1:end]))
+    return blocks
+
+
+def clicker_history(settings: Settings) -> list[dict]:
+    """Vom Clicker getroffene Entscheidungen aus `DECIDED-AND-DONE.md`.
+
+    Nur Bloecke mit dem `decision-clicker`-Beleg zaehlen — Eintraege, die von
+    Hand oder einer Automation dort landeten, tauchen im Verlauf nicht auf.
+    Juengste zuerst (Dateireihenfolge = Klickreihenfolge, wird umgedreht).
+    """
+    path = settings.done_file
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8-sig")
+    items: list[dict] = []
+    for entry_id, title, body in _done_blocks(text):
+        decided_on = choice = source_file = ""
+        source_line = 0
+        reset_on = reset_reason = ""
+        for line in body:
+            stripped = line.strip()
+            if m := CLICKER_DECIDED_AT_RE.match(stripped):
+                decided_on = m.group(1)
+            elif m := DONE_DECISION_VALUE_RE.match(stripped):
+                choice = m.group(1).strip()
+            elif m := DONE_QUELLE_RE.match(stripped):
+                source_file, source_line = m.group(1), int(m.group(2))
+            elif m := DONE_RESET_RE.match(stripped):
+                reset_on, reset_reason = m.group(1), m.group(2).strip()
+        if not decided_on:
+            continue  # kein Clicker-Beleg -- nicht Teil des Verlaufs
+        items.append({
+            "id": entry_id, "title": title or "(ohne Titel)", "choice": choice,
+            "decided_on": decided_on, "source_file": source_file,
+            "source_line": source_line,
+            "status": "zurueckgesetzt" if reset_on else "aktiv",
+            "reset_on": reset_on, "reset_reason": reset_reason,
+        })
+    return list(reversed(items))
 
 
 def find(index: dict, key: str) -> dict | None:

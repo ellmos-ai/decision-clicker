@@ -18,15 +18,17 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from .chain import ChainError, _load_index_tool
+from .chain import ChainError, DONE_HEADING_RE, _load_index_tool
 from .config import Settings
 
 DECISION_FIELD_RE = re.compile(r"^(\s*ENTSCHEIDUNG\s+DES\s+USERS\b[^:]*:)(.*)$", re.I)
 DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:", re.I)
+CLICKER_DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:.*\(decision-clicker\)\s*$", re.I)
 POINTER_RE = re.compile(r"^\s*Pointer\s*/", re.I)
 SEPARATOR_RE = re.compile(r"^\s*-{3,}\s*$")
 
 TOOL_TAG = "decision-clicker"
+PLACEHOLDER = "[HIER EINTRAGEN]"
 
 
 class WriteError(RuntimeError):
@@ -177,6 +179,165 @@ def fill_decision(
 
 
 # ---------------------------------------------------------------------------
+# Rueckgaengig — die genaue Umkehrung von `fill_decision` + `append_done`
+# ---------------------------------------------------------------------------
+def revert_decision(
+    settings: Settings,
+    path: Path,
+    start_line: int,
+    *,
+    expected_id: str | None = None,
+    make_backup: bool = True,
+) -> dict:
+    """Entscheidungsfeld zurueck auf den Platzhalter — die Umkehrung von `fill_decision`.
+
+    Entfernt genau die zwei Zeilen (Leerzeile + `ENTSCHIEDEN AM: ... (decision-clicker)`),
+    die `fill_decision` eingefuegt hat, und setzt den Feldwert zurueck auf
+    `[HIER EINTRAGEN]`. Alles andere im Eintrag bleibt Byte fuer Byte stehen —
+    derselbe Leitsatz wie beim Schreiben.
+
+    Lehnt ab, wenn der Eintrag nicht (mehr) entschieden ist, oder wenn die
+    ENTSCHIEDEN-AM-Zeile nicht erkennbar von diesem Werkzeug stammt: eine
+    von Hand oder einer Automation getroffene Entscheidung wird NIE
+    zurueckgenommen, nur weil jemand die ID kennt.
+    """
+    text, has_bom = _read(path)
+    lines = text.splitlines(keepends=True)
+    start, end = entry_bounds(settings, lines, start_line)
+
+    if expected_id:
+        kopf = lines[start].rstrip("\r\n")
+        if expected_id not in kopf:
+            raise WriteError(
+                f"{path.name}:{start_line} traegt nicht mehr {expected_id} "
+                f"(dort steht jetzt: {kopf[:70]!r}) — Ansicht ist veraltet, "
+                "bitte neu laden."
+            )
+
+    field_index = None
+    for index in range(start, end):
+        if DECISION_FIELD_RE.match(lines[index].rstrip("\r\n")):
+            field_index = index
+            break
+    if field_index is None:
+        raise WriteError(
+            f"Kein Feld 'ENTSCHEIDUNG DES USERS' im Eintrag ab Zeile {start_line} in {path.name}"
+        )
+
+    body = lines[field_index].rstrip("\r\n")
+    ending = lines[field_index][len(body):] or _newline_of(lines[start:end]) or _newline_of(lines)
+    match = DECISION_FIELD_RE.match(body)
+    assert match is not None  # oben bereits geprueft
+    label, current = match.group(1), match.group(2)
+
+    tool = _load_index_tool(settings.index_script)
+    if tool.is_placeholder(current):
+        raise WriteError(
+            f"Eintrag ab Zeile {start_line} in {path.name} ist nicht entschieden "
+            "— nichts zum Zurücknehmen."
+        )
+
+    zeile_1 = lines[field_index + 1].strip("\r\n") if field_index + 1 < end else "x"
+    zeile_2 = lines[field_index + 2].rstrip("\r\n") if field_index + 2 < end else ""
+    if zeile_1 != "" or not CLICKER_DECIDED_AT_RE.match(zeile_2):
+        raise WriteError(
+            f"{path.name}:{start_line} wurde nicht erkennbar von {TOOL_TAG} entschieden "
+            "(keine passende ENTSCHIEDEN-AM-Zeile) — extern entschieden, nicht rückgängig machbar."
+        )
+
+    backup_path = backup(path, settings, tag="undo") if make_backup else None
+
+    lines[field_index] = f"{label} {PLACEHOLDER}{ending}"
+    del lines[field_index + 1:field_index + 3]
+
+    _write(path, "".join(lines), has_bom)
+    return {
+        "file": str(path),
+        "line": field_index + 1,
+        "backup": str(backup_path) if backup_path else None,
+    }
+
+
+def mark_decision_undone(
+    settings: Settings,
+    entry_id: str,
+    reason: str,
+    *,
+    on: str | None = None,
+    make_backup: bool = True,
+) -> dict:
+    """Append-only-Vermerk in `DECIDED-AND-DONE.md`: Entscheidung zurückgesetzt.
+
+    Der urspruengliche Beleg bleibt vollstaendig stehen — es wird NICHTS
+    geloescht, nur eine Zeile ergaenzt. Zielblock ist der zuletzt
+    geschriebene, noch nicht als zurückgesetzt markierte Clicker-Beleg
+    dieser ID; gibt es keinen, wird abgelehnt statt geraten.
+    """
+    path = settings.done_file
+    if not path.is_file():
+        raise WriteError(f"{path} nicht gefunden")
+    text, has_bom = _read(path)
+    lines = text.splitlines(keepends=True)
+    newline = _newline_of(lines)
+
+    heads: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if match := DONE_HEADING_RE.match(line.rstrip("\r\n")):
+            heads.append((index, match.group(1)))
+
+    target: tuple[int, int] | None = None
+    for pos, (index, hid) in enumerate(heads):
+        if hid != entry_id:
+            continue
+        end = heads[pos + 1][0] if pos + 1 < len(heads) else len(lines)
+        block = "".join(lines[index:end])
+        if f"({TOOL_TAG})" not in block:
+            continue
+        if re.search(r"^ZUR[UÜ]CKGESETZT\s+AM\s*:", block, re.I | re.M):
+            continue  # dieser Beleg ist bereits zurueckgesetzt — naechsten pruefen
+        target = (index, end)
+    if target is None:
+        raise WriteError(
+            f"{entry_id} hat keinen offenen {TOOL_TAG}-Beleg in {path.name} "
+            "— extern entschieden oder bereits zurückgesetzt."
+        )
+    start, end = target
+
+    einfuegen = end
+    while einfuegen > start + 1 and lines[einfuegen - 1].strip() == "":
+        einfuegen -= 1
+
+    stamp = on or datetime.now().strftime("%Y-%m-%d")
+    marker = f"ZURÜCKGESETZT AM: {stamp} ({reason}) — Entscheidung wieder offen"
+    backup_path = backup(path, settings, tag="undo") if make_backup else None
+    lines[einfuegen:einfuegen] = [f"{marker}{newline}"]
+    _write(path, "".join(lines), has_bom)
+    return {"file": str(path), "backup": str(backup_path) if backup_path else None}
+
+
+def undo_decision(
+    settings: Settings,
+    entry: dict,
+    reason: str,
+    *,
+    on: str | None = None,
+    make_backup: bool = True,
+) -> dict:
+    """Einen Klick vollstaendig rueckgaengig machen: Feld + Beleg.
+
+    Reihenfolge bewusst: erst die Kette (die Quelle der Wahrheit) wieder
+    oeffnen, danach den Beleg vermerken — genau wie `decide()` erst das
+    Feld fuellt und danach den Beleg schreibt. Schlaegt der erste Schritt
+    fehl, bleibt gar nichts angefasst.
+    """
+    kette = revert_decision(
+        settings, Path(entry["source_path"]), entry["source_line"],
+        expected_id=entry["id"], make_backup=make_backup)
+    beleg = mark_decision_undone(settings, entry["id"], reason, on=on, make_backup=make_backup)
+    return {"ok": True, "id": entry["id"], "kette": kette, "beleg": beleg}
+
+
+# ---------------------------------------------------------------------------
 # Neue Eintraege
 # ---------------------------------------------------------------------------
 OPTION_LINE_RE = re.compile(r"^\s*(?:[-•*]\s*)?(?i:Option\s+)?([A-Z])\s*[:—–-]\s*(.*)$")
@@ -218,7 +379,7 @@ def render_entry(
         rows += [normalise_option(option) for option in optionen]
     if empfehlung:
         rows += ["", f"EMPFEHLUNG: {empfehlung}"]
-    rows += ["", "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]", "", "---", ""]
+    rows += ["", f"ENTSCHEIDUNG DES USERS: {PLACEHOLDER}", "", "---", ""]
     return newline.join(rows) + newline
 
 
@@ -396,6 +557,7 @@ def foreign_locks(settings: Settings) -> list[Path]:
 
 __all__ = [
     "ChainError", "WriteError", "append_done", "append_entry", "backup",
-    "entry_bounds", "fill_decision", "foreign_locks", "release_lock",
-    "render_decision", "render_entry", "write_lock",
+    "entry_bounds", "fill_decision", "foreign_locks", "mark_decision_undone",
+    "release_lock", "render_decision", "render_entry", "revert_decision",
+    "undo_decision", "write_lock",
 ]

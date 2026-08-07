@@ -89,6 +89,7 @@ def layout(title: str, body: str, active: str = "") -> bytes:
 <header><b>Decision-Clicker</b><nav>
 {link('/', 'Übersicht', 'home')}
 {link('/klick', 'Durchklicken', 'klick')}
+{link('/verlauf', 'Verlauf', 'verlauf')}
 {link('/neu', 'Einstellen', 'neu')}
 {link('/register', 'Register', 'register')}
 </nav></header><main>{body}</main></body></html>"""
@@ -199,6 +200,62 @@ noch {rest} offen</div>
 <div class="reihe"><a class="btn" href="/klick?skip={escape(entry["key"])}">Später entscheiden</a>
 <a class="btn" href="/">Abbrechen</a></div>"""
     return layout("Durchklicken", body, "klick")
+
+
+def bestaetigung(entry_id: str, title: str, choice: str, note: str = "", rest: int = 0) -> bytes:
+    """Deutliche Rueckmeldung nach dem Klick — keine stille Weiterleitung mehr.
+
+    Der Nutzer sieht explizit, WAS gerade geschrieben wurde, und bekommt einen
+    direkten Weg, es sofort wieder zurueckzunehmen, statt erst im Verlauf
+    danach suchen zu muessen.
+    """
+    anmerkung = f' <span class="hint">— {escape(note)}</span>' if note else ""
+    weiter = (f'<a class="btn prim" href="/klick">Weiter zur nächsten Entscheidung '
+              f'({rest} offen)</a>' if rest else
+              '<a class="btn prim" href="/klick">Zur Durchklick-Ansicht</a>')
+    body = f"""<div class="card" style="border-left:4px solid var(--acc)">
+<h1>✅ Entschieden: {escape(entry_id)} — Option {escape(choice)}</h1>
+<p>{escape(title)}</p>
+<p>Gewählt: <b>{escape(choice)}</b>{anmerkung}</p>
+<div class="reihe">
+<form method="post" action="/api/undo/{escape(entry_id)}">
+<button class="btn" type="submit">Rückgängig machen</button></form>
+{weiter}
+<a class="btn" href="/verlauf">Verlauf</a>
+<a class="btn" href="/">Übersicht</a>
+</div></div>"""
+    return layout("Entschieden", body, "klick")
+
+
+def _verlauf_zeile(e: dict) -> str:
+    reset_hint = (f' <span class="hint">{escape(e["reset_on"])}'
+                  f' — {escape(e["reset_reason"])}</span>' if e["status"] != "aktiv" else "")
+    aktion = ""
+    if e["status"] == "aktiv":
+        aktion = (f'<form method="post" action="/api/undo/{escape(e["id"])}">'
+                  '<button class="btn" type="submit">Rückgängig</button></form>')
+    return (
+        f'<tr><td><code>{escape(e["id"])}</code></td>'
+        f'<td>{escape(e["title"])}</td>'
+        f'<td>{escape(e["choice"] or "—")}</td>'
+        f'<td>{escape(e["decided_on"])}</td>'
+        f'<td><span class="tag">{escape(e["status"])}</span>{reset_hint}</td>'
+        f'<td>{aktion}</td></tr>'
+    )
+
+
+def verlauf(eintraege: list[dict]) -> bytes:
+    if eintraege:
+        zeilen = "".join(_verlauf_zeile(e) for e in eintraege)
+        tabelle = ("<table><tr><th>ID</th><th>Titel</th><th>Wahl</th><th>Am</th>"
+                   f"<th>Status</th><th></th></tr>{zeilen}</table>")
+    else:
+        tabelle = '<div class="leer">Noch keine über den Clicker getroffene Entscheidung.</div>'
+    body = f"""<h1>Verlauf</h1>
+<div class="meta">Nur Entscheidungen, die über diese Oberfläche getroffen wurden — nicht
+das vollständige Register aller Entscheidungen (dafür: <a href="/register">Register</a>).</div>
+<div class="card"><h2>{len(eintraege)} Einträge</h2>{tabelle}</div>"""
+    return layout("Verlauf", body, "verlauf")
 
 
 def neu(next_id: str, ziel: str, meldung: str = "") -> bytes:

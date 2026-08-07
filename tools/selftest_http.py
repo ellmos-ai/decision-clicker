@@ -12,6 +12,7 @@ Aufruf: PYTHONIOENCODING=utf-8 python tools/selftest_http.py
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import urllib.error
@@ -80,8 +81,8 @@ def main() -> int:
                f"Zaehler zeigt {offen_vorher} offene Entscheidungen")
         pruefe("Durchklicken" in seite, "Navigation vorhanden")
 
-        schritt(2, "GET /klick, /neu, /register, /api/health")
-        for pfad in ("/klick", "/neu", "/register", "/api/health"):
+        schritt(2, "GET /klick, /neu, /register, /verlauf, /api/health")
+        for pfad in ("/klick", "/neu", "/register", "/verlauf", "/api/health"):
             code, _ = hole(f"{url}{pfad}")
             pruefe(code == 200, f"{pfad} -> HTTP {code}")
 
@@ -112,9 +113,13 @@ def main() -> int:
         pruefe("Schreibt der Clicker korrekt" in seite, "Kontext sichtbar")
 
         schritt(5, "POST /api/decide — Entscheidung eintragen")
-        status, _ = sende(f"{url}/api/decide",
-                          {"key": dummy["key"], "choice": "A", "note": "Selbsttest bestätigt"})
-        pruefe(status == 200, f"HTTP {status} (303 auf /klick, urllib folgt)")
+        status, seite = sende(f"{url}/api/decide",
+                              {"key": dummy["key"], "choice": "A", "note": "Selbsttest bestätigt"})
+        pruefe(status == 200, f"HTTP {status}")
+        pruefe("✅" in seite and "Entschieden" in seite,
+               "direkte Bestätigungsseite statt stiller Weiterleitung")
+        pruefe(f'action="/api/undo/{dummy["key"]}"' in seite,
+               "Rückgängig-Knopf auf der Bestätigungsseite vorhanden")
 
         schritt(6, "Kette pruefen")
         text = ziel.read_text(encoding="utf-8-sig")
@@ -134,7 +139,35 @@ def main() -> int:
         pruefe(status == 409 and "bereits entschieden" in seite,
                f"HTTP {status} — kein Ueberschreiben")
 
-        schritt(8, "Rueckbau des Dummys")
+        schritt(8, "GET /verlauf — Dummy erscheint als 'aktiv'")
+        status, seite = hole(f"{url}/verlauf")
+        pruefe(status == 200, f"HTTP {status}")
+        pruefe(dummy["id"] in seite, "Dummy im Verlauf sichtbar")
+        _status, roh = hole(f"{url}/api/history")
+        eintrag = next((e for e in json.loads(roh)["eintraege"] if e["id"] == dummy["id"]), None)
+        pruefe(eintrag is not None and eintrag["status"] == "aktiv",
+               "/api/history zeigt den Dummy als aktiv")
+
+        schritt(9, "POST /api/undo/<id> — Klick rueckgaengig machen")
+        status, seite = sende(f"{url}/api/undo/{dummy['key']}", {})
+        pruefe(status == 200, f"HTTP {status}")
+        pruefe(dummy["id"] in seite, "Landet auf /klick?key=... mit derselben ID")
+        neu = chain.find(chain.build_index(settings), dummy["key"])
+        pruefe(neu["status_class"] == chain.STATUS_OPEN, "Entscheidung ist wieder offen")
+        text_nach_undo = ziel.read_text(encoding="utf-8-sig")
+        pruefe("ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]" in text_nach_undo.split(dummy["id"])[-1][:400],
+               "Feld steht wieder auf dem Platzhalter")
+        beleg_nach_undo = done.read_text(encoding="utf-8-sig")
+        pruefe(dummy["id"] in beleg_nach_undo and "ZURÜCKGESETZT AM:" in beleg_nach_undo,
+               "Ursprünglicher Beleg bleibt stehen, Vermerk kommt dazu")
+
+        schritt(10, "Verlauf zeigt 'zurückgesetzt', zweiter Undo prallt ab")
+        _status, seite = hole(f"{url}/verlauf")
+        pruefe("zurueckgesetzt" in seite, "Status im Verlauf aktualisiert")
+        status, seite = sende(f"{url}/api/undo/{dummy['key']}", {})
+        pruefe(status == 409, f"HTTP {status} — kein zweites Zurücknehmen")
+
+        schritt(11, "Rueckbau des Dummys")
         protokoll = settings.archive_dir / f"SELFTEST_decision-clicker_{datetime.now():%Y-%m-%d}.txt"
         # Auf BYTE-Ebene abschneiden: `read_text` uebersetzt CRLF zu LF, damit
         # waere der Versatz falsch und der Block leer (Fehler vom 2026-08-07).
