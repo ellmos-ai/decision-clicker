@@ -140,6 +140,33 @@ class DecisionClicker:
         self._refresh()
         return {"ok": True, "id": entry["id"], "key": key, **ergebnis}
 
+    # ------------------------------------------------------------------
+    # Verlauf & Rueckgaengig
+    # ------------------------------------------------------------------
+    def history(self) -> list[dict]:
+        """Vom Clicker getroffene Entscheidungen, juengste zuerst."""
+        return chain.clicker_history(self.settings)
+
+    def undo(self, key: str, reason: str = "Klicker-Oberfläche, rückgängig gemacht") -> dict:
+        """Einen Klick rueckgaengig machen — nur fuer clicker-eigene Entscheidungen.
+
+        Die Entscheidung erscheint danach wieder als offen (`open_entries()`);
+        der urspruengliche Beleg bleibt stehen und bekommt zusaetzlich einen
+        ZURUECKGESETZT-Vermerk.
+        """
+        self._guard()
+        index = chain.build_index(self.settings)
+        entry = chain.find(index, key)
+        if entry is None:
+            raise WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
+        if entry["status_class"] != chain.STATUS_PENDING:
+            raise WriteError(
+                f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
+                f"(aktuell: {entry['status_class']}) — nicht rückgängig machbar.")
+        ergebnis = writer.undo_decision(self.settings, entry, reason)
+        self._refresh()
+        return ergebnis
+
     def create(self, title: str, *, frage: str = "", optionen: list[str] | None = None,
                empfehlung: str = "", kontext: str = "", quelle: str = "",
                scope: str = "") -> dict:

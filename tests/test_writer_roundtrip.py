@@ -31,8 +31,12 @@ def test_nur_das_entscheidungsfeld_aendert_sich(kette: Settings, original_bytes)
 
     writer.fill_decision(kette, pfad, ziel["source_line"], "B", "Testnotiz", on="2026-08-07")
 
+    # read_bytes()+decode() statt read_text(): Letzteres macht Universal-Newline-
+    # Uebersetzung (CRLF -> LF), was in CRLF-Teilen der Kette (z. B. Teil 4)
+    # JEDE Zeile als "geaendert" zeigen wuerde -- ein Artefakt der Lesart, keine
+    # echte Aenderung. `vorher` liest schon bytegenau, `nachher` muss es auch.
     vorher = original_bytes[pfad.name].decode("utf-8-sig").splitlines(keepends=True)
-    nachher = pfad.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    nachher = pfad.read_bytes().decode("utf-8-sig").splitlines(keepends=True)
 
     delta = [d for d in difflib.ndiff(vorher, nachher) if d[0] in "+-"]
     entfernt = [d[2:] for d in delta if d.startswith("- ")]
@@ -59,22 +63,31 @@ def test_alle_anderen_dateien_bleiben_unberuehrt(kette: Settings, original_bytes
 
 
 def test_zeilenenden_und_bom_bleiben_erhalten(kette: Settings, original_bytes):
-    """CRLF-Dateien bleiben CRLF, LF-Dateien bleiben LF — auch die neuen Zeilen."""
+    """Neue Zeilen uebernehmen den lokalen Zeilenumbruch-Stil — der Rest der
+    Datei bleibt unangetastet, auch wenn sie (wie Teil 4 real) keine reine
+    CRLF-Datei mehr ist, sondern ueberwiegend CRLF mit ein paar alten
+    Einzel-LF-Zeilen. Die Behauptung ist NICHT "die ganze Datei ist einheitlich",
+    sondern "fill_decision aendert an der bestehenden Mischung nichts, ausser
+    zwei neuen, einheitlich endenden Zeilen"."""
     for eintrag in _offene(kette)[:6]:
         pfad = Path(eintrag["source_path"])
         vorher = original_bytes[pfad.name]
         crlf_vorher = vorher.count(b"\r\n")
         lf_vorher = vorher.count(b"\n")
+        lf_only_vorher = lf_vorher - crlf_vorher
         try:
             writer.fill_decision(kette, pfad, eintrag["source_line"], "A", on="2026-08-07")
         except writer.WriteError:
             continue
         nachher = pfad.read_bytes()
         assert nachher.startswith(b"\xef\xbb\xbf") == vorher.startswith(b"\xef\xbb\xbf")
-        if crlf_vorher:  # reine CRLF-Datei: alle neuen Zeilen ebenfalls CRLF
-            assert nachher.count(b"\r\n") == nachher.count(b"\n")
-        else:
-            assert b"\r\n" not in nachher
+        crlf_nachher = nachher.count(b"\r\n")
+        lf_only_nachher = nachher.count(b"\n") - crlf_nachher
+        crlf_delta = crlf_nachher - crlf_vorher
+        lf_only_delta = lf_only_nachher - lf_only_vorher
+        assert crlf_delta + lf_only_delta == 2, "genau zwei neue Zeilen erwartet"
+        assert crlf_delta in (0, 2) and lf_only_delta in (0, 2), (
+            "die zwei neuen Zeilen muessen einheitlich enden, nicht gemischt")
         assert nachher.count(b"\n") == lf_vorher + 2
 
 

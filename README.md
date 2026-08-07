@@ -43,17 +43,38 @@ python -m decision_clicker            # Server auf 8096
 python -m decision_clicker --check    # nur nachsehen, nichts starten
 ```
 
-## Die vier Ansichten
+## Die fünf Ansichten
 
 | Seite | Was sie tut |
 |---|---|
 | **Übersicht** (`/`) | Zähler je Statusklasse, Liste aller offenen Entscheidungen |
 | **Durchklicken** (`/klick`) | Eine Entscheidung pro Ansicht: Titel, Kontext, Optionen als Knöpfe, Empfehlung hervorgehoben, Freitext-Anmerkung, „Später entscheiden" |
+| **Verlauf** (`/verlauf`) | Chronologische Liste aller über den Clicker getroffenen Entscheidungen (nicht das ganze Register) — je Eintrag Wahl, Zeitpunkt, Status (aktiv/zurückgesetzt) und ein direkter „Rückgängig"-Knopf |
 | **Einstellen** (`/neu`) | Formular für eine neue Entscheidung; die ID wird kollisionssicher vergeben |
 | **Register** (`/register`) | Durchsuchbare Liste aller getroffenen Entscheidungen aus Kette, DECIDED-AND-DONE, Archiv und Desktop-Postfach — je ID **eine** Zeile mit allen Fundstellen |
 
-Dazu `/api/health` (Kurzstatus als JSON), `/api/index` (vollständiger Index) und
-`/api/intake` (Postfach-Stand bzw. Übernahme per POST).
+Dazu `/api/health` (Kurzstatus als JSON), `/api/index` (vollständiger Index),
+`/api/history` (Verlauf als JSON), `/api/intake` (Postfach-Stand bzw. Übernahme
+per POST) und `POST /api/undo/<id>` (einen Klick rückgängig machen).
+
+### Klick-Bestätigung + Rückgängig [2026-08-07]
+
+Ein POST auf `/api/decide` führt **nicht mehr** kommentarlos zur nächsten
+Entscheidung. Im Browser erscheint eine deutliche Bestätigungsseite
+(„✅ Entschieden: D-… — Option A") mit einem direkten **Rückgängig**-Knopf und
+einem bewussten Klick auf „Weiter zur nächsten Entscheidung". JSON-Aufrufer
+(Automationen) bekommen weiterhin sofort die Rohdaten, keine HTML-Seite.
+
+Anlass: Am 07.08. wurden beim ersten Durchklicken drei Entscheidungen
+unbemerkt live geschrieben, weil die alte stille Weiterleitung sofort zur
+nächsten Ansicht sprang. `POST /api/undo/<id>` (bzw. der Rückgängig-Knopf auf
+der Bestätigungs- oder Verlaufsseite) setzt das Entscheidungsfeld exakt auf
+den Zustand vor dem Klick zurück — nur für Entscheidungen, die **nachweislich
+dieses Werkzeug** getroffen hat (erkennbar an der `(decision-clicker)`-Markierung
+in der `ENTSCHIEDEN AM`-Zeile); von Hand oder extern entschiedene Einträge lässt
+es unangetastet (HTTP 409). Der ursprüngliche Beleg in `DECIDED-AND-DONE.md`
+wird dabei **nie gelöscht**, nur um eine `ZURÜCKGESETZT AM: …`-Zeile ergänzt —
+append-only, wie überall sonst in diesem Werkzeug.
 
 ---
 
@@ -198,10 +219,13 @@ ein struktureller Eingriff in die Kette gehört zu einem Menschen.
 python -m pytest -q
 ```
 
-40 Tests, davon der Kern in `tests/test_writer_roundtrip.py`: Er füllt
+93 Tests, davon der Kern in `tests/test_writer_roundtrip.py`: Er füllt
 Entscheidungsfelder in **Kopien echter TO-DECIDE-Dateien** und weist per Diff
 nach, dass genau eine Zeile ersetzt und genau zwei ergänzt wurden — alles andere
 bleibt Byte für Byte gleich, inklusive CRLF in Teil 4 und LF in den Teilen 1–3.
+`tests/test_undo.py` spiegelt das für die Gegenrichtung: ein Roundtrip
+decide → undo lässt die Kettendatei byte-identisch zum Zustand vor dem Klick
+zurück.
 
 `tests/test_server.py` fährt einen echten Server auf einem freien Port hoch (nie
 8096) und geht den vollständigen Weg über HTTP.
@@ -223,6 +247,13 @@ zurück; das Protokoll landet in `_decision-archive/`.
 ---
 
 ## Folgearbeiten (nicht Teil dieses Werkzeugs)
+
+**Undo im Panel P10 der Unified GUI — offen, gehört dem P10-Panel.** Die
+Fassade (`DecisionClicker.history()` / `.undo()`) und die HTTP-Route
+(`POST /api/undo/<id>`) sind fertig und getestet; das Panel P10 selbst bindet
+sie noch nicht ein (dort bislang nur `decide()`/`create()` verdrahtet). Bis
+dahin ist Rückgängig-Machen nur über die Mini-UI dieses Pakets (`/verlauf`,
+`/klick`-Bestätigungsseite) oder direkt über die Fassade erreichbar.
 
 **Automationen-Sweep — offen, gehört dem Operator.** Solange Automationen auf den
 Desktop-Pfad schreiben, füllt sich das Postfach immer wieder. Der Clicker fängt

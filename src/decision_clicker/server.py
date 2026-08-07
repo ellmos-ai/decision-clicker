@@ -10,7 +10,7 @@ import json
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import chain, intake, ui, writer
 from .api import options_of
@@ -126,6 +126,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(ui.neu(chain.next_id(index), ziel.name, hinweis))
         elif path == "/register":
             self._register(query.get("q", ""))
+        elif path == "/verlauf":
+            self._send(ui.verlauf(chain.clicker_history(self.settings)))
+        elif path == "/api/history":
+            self._json({"eintraege": chain.clicker_history(self.settings)})
         elif path == "/api/index":
             self._json(chain.build_index(self.settings))
         elif path == "/api/intake":
@@ -182,12 +186,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             form = self._form()
-            if self.path == "/api/decide":
+            pfad = urlparse(self.path).path
+            if pfad == "/api/decide":
                 self._decide(form)
-            elif self.path == "/api/new":
+            elif pfad == "/api/new":
                 self._new(form)
-            elif self.path == "/api/intake":
+            elif pfad == "/api/intake":
                 self._intake()
+            elif pfad.startswith("/api/undo/"):
+                self._undo(unquote(pfad[len("/api/undo/"):]))
             else:
                 self._send(ui.meldung("Nicht gefunden", self.path, "/", "Übersicht"), 404)
         except (writer.WriteError, chain.ChainError) as exc:
@@ -217,7 +224,40 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
         print(f"  ENTSCHIEDEN {key} -> {ergebnis['value']} "
               f"({Path(ergebnis['file']).name}:{ergebnis['line']})")
-        self._antwort("/klick", {"ok": True, "id": entry["id"], **ergebnis})
+        if getattr(self, "wants_json", False):
+            self._json({"ok": True, "id": entry["id"], **ergebnis})
+        else:
+            # Deutliche Bestaetigung statt stiller Weiterleitung zur naechsten
+            # Entscheidung — ein Fehlklick soll sofort auffallen, nicht erst
+            # beim naechsten Durchsehen des Verlaufs (Anlass: 2026-08-07, drei
+            # unbemerkte Klicks in Folge).
+            offen = chain.open_entries(chain.build_index(self.settings))
+            rest = len([e for e in offen if e["key"] not in self.skipped])
+            self._send(ui.bestaetigung(entry["id"], entry["title"], choice, note, rest))
+
+    def _undo(self, key: str) -> None:
+        if blocker := self._guard():
+            raise writer.WriteError(blocker)
+        key = key.strip()
+        if not key:
+            raise writer.WriteError("Ohne ID wird nichts zurückgenommen.")
+        index = chain.build_index(self.settings)
+        entry = chain.find(index, key)
+        if entry is None:
+            raise writer.WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
+        if entry["status_class"] != chain.STATUS_PENDING:
+            raise writer.WriteError(
+                f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
+                f"(aktuell: {entry['status_class']}) — extern entschieden oder "
+                "bereits zurückgesetzt, nicht rückgängig machbar.")
+        ergebnis = writer.undo_decision(
+            self.settings, entry, "Klicker-Oberfläche, rückgängig gemacht")
+        try:
+            chain.refresh_artifacts(self.settings)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+        print(f"  ZURUECKGESETZT {key}")
+        self._antwort(f"/klick?key={key}", {"ok": True, "id": key, **ergebnis})
 
     def _new(self, form: dict[str, str]) -> None:
         if blocker := self._guard():

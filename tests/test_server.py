@@ -85,9 +85,11 @@ def test_durchklicken_schreibt_in_die_kette(server):
     pfad = Path(ziel["source_path"])
     vorher = pfad.read_bytes()
 
-    status, _ = sende(f"{url}/api/decide",
-                      {"key": ziel["key"], "choice": "B", "note": "über HTTP geprüft"})
-    assert status == 200  # urllib folgt dem 303 auf /klick
+    status, seite = sende(f"{url}/api/decide",
+                          {"key": ziel["key"], "choice": "B", "note": "über HTTP geprüft"})
+    assert status == 200  # direkte Bestaetigungsseite, keine Weiterleitung mehr
+    assert "Entschieden" in seite
+    assert ziel["id"] in seite
 
     text = pfad.read_text(encoding="utf-8-sig")
     assert "[B — über HTTP geprüft]" in text
@@ -100,6 +102,35 @@ def test_durchklicken_schreibt_in_die_kette(server):
     assert ziel["id"] in kette.done_file.read_text(encoding="utf-8-sig")
     danach = chain.find(chain.build_index(kette), ziel["key"])
     assert danach["status_class"] == chain.STATUS_PENDING
+
+
+def test_klick_zeigt_deutliche_bestaetigung_statt_stiller_weiterleitung(server):
+    """Regression zum Fehlklick-Anlass vom 2026-08-07: der Nutzer muss SEHEN,
+    was gerade entschieden wurde, statt kommentarlos zur naechsten Entscheidung
+    weitergereicht zu werden."""
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    _status, seite = sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
+    assert "✅" in seite
+    assert f'Entschieden: {ziel["id"]}' in seite
+    assert "Option A" in seite
+    assert 'action="/api/undo/' in seite, "Rueckgaengig-Knopf muss sofort sichtbar sein"
+    assert "Weiter zur nächsten Entscheidung" in seite
+
+
+def test_decide_ueber_json_bekommt_weiter_json_ohne_bestaetigungsseite(server):
+    """Automationen (JSON-Aufrufer) bekommen weiterhin nur die Rohdaten."""
+    import json
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    payload = json.dumps({"key": ziel["key"], "choice": "A", "note": ""}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{url}/api/decide", data=payload,
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=10) as antwort:
+        daten = json.loads(antwort.read().decode("utf-8"))
+    assert daten["ok"] is True
+    assert daten["id"] == ziel["id"]
 
 
 def test_zweiter_klick_auf_dieselbe_id_prallt_ab(server):
@@ -211,3 +242,95 @@ def test_register_fuehrt_jede_id_nur_einmal(server):
     _status, seite = hole(f"{url}/register?q=D-20990805")
     ids = re.findall(r"<tr><td><code>(D-\S+?)</code>", seite)
     assert len(ids) == len(set(ids)), f"ID doppelt im Register: {ids}"
+
+
+# ---------------------------------------------------------------------------
+# Verlauf & Rueckgaengig (OP-CLICKER-UNDO, 2026-08-07)
+# ---------------------------------------------------------------------------
+def test_verlauf_zeigt_die_bekannte_anzahl(server):
+    """Die Testkette ist eine VOLLE Kopie der echten Kette — Verlauf ist also
+    nicht zwingend leer. Verglichen wird gegen `chain.clicker_history()`."""
+    url, kette = server
+    status, seite = hole(f"{url}/verlauf")
+    assert status == 200
+    assert "Verlauf" in seite
+    erwartet = chain.clicker_history(kette)
+    assert f"{len(erwartet)} Einträge" in seite
+    for eintrag in erwartet[:3]:
+        assert eintrag["id"] in seite
+
+
+def test_verlauf_zeigt_getroffene_entscheidung(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": "Verlaufstest"})
+    status, seite = hole(f"{url}/verlauf")
+    assert status == 200
+    assert ziel["id"] in seite
+    assert "aktiv" in seite
+    assert f'action="/api/undo/{ziel["id"]}"' in seite
+
+
+def test_api_history_ist_maschinenlesbar(server):
+    """Juengste-zuerst: `treffer[0]` ist der gerade getroffene Eintrag — auch
+    wenn dieselbe ID in der echten Kette schon einmal (mit anderem Ausgang)
+    im Verlauf stand, siehe D-20260729-00[1-3] nach dem Sofort-Rollback."""
+    import json
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
+    _status, roh = hole(f"{url}/api/history")
+    daten = json.loads(roh)
+    treffer = [e for e in daten["eintraege"] if e["id"] == ziel["id"]]
+    assert treffer, "kein Verlaufseintrag fuer die frisch entschiedene ID"
+    assert treffer[0]["status"] == "aktiv"
+    assert treffer[0]["choice"] == "[A]"
+
+
+def test_undo_setzt_die_entscheidung_ueber_http_zurueck(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    pfad = Path(ziel["source_path"])
+    vorher = pfad.read_bytes()
+
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "B", "note": "wird rueckgaengig"})
+    zwischenstand = chain.find(chain.build_index(kette), ziel["key"])
+    assert zwischenstand["status_class"] == chain.STATUS_PENDING
+
+    status, seite = sende(f"{url}/api/undo/{ziel['key']}", {})
+    assert status == 200
+    assert ziel["id"] in seite  # landet auf /klick?key=... mit derselben ID
+
+    assert pfad.read_bytes() == vorher, "Kette muss byte-identisch zum Vorzustand sein"
+    danach = chain.find(chain.build_index(kette), ziel["key"])
+    assert danach["status_class"] == chain.STATUS_OPEN
+
+    _status, verlauf_seite = hole(f"{url}/verlauf")
+    assert "zurueckgesetzt" in verlauf_seite
+
+
+def test_zweiter_undo_ueber_http_prallt_ab(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
+    sende(f"{url}/api/undo/{ziel['key']}", {})
+    status, seite = sende(f"{url}/api/undo/{ziel['key']}", {})
+    assert status == 409
+    assert "nicht rückgängig machbar" in seite or "extern entschieden" in seite
+
+
+def test_undo_auf_nie_entschiedene_id_prallt_ab(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    status, _seite = sende(f"{url}/api/undo/{ziel['key']}", {})
+    assert status == 409
+
+
+def test_fremde_sperre_verhindert_auch_das_undo(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
+    (kette.chain_dir / "LOCK.anderer-agent.txt").write_text("belegt", encoding="utf-8")
+    status, seite = sende(f"{url}/api/undo/{ziel['key']}", {})
+    assert status == 409
+    assert "Fremde Sperre" in seite
