@@ -18,6 +18,23 @@ from .config import Settings, load
 MAX_BODY = 256 * 1024
 
 
+def options_of(entry: dict, raw: str) -> list[tuple[str, str]]:
+    """Optionen für die Knöpfe — aus dem VOLLTEXT, nicht aus dem Index-Auszug.
+
+    Der Index kürzt `options_excerpt` auf 400 Zeichen. Bei ausführlichen
+    Einträgen fiel dadurch die letzte Option unter den Tisch und war nicht
+    anklickbar (belegt an D-20260806-001: Option C fehlte). Genommen wird
+    darum die längere der beiden Lesarten.
+    """
+    aus_volltext: list[tuple[str, str]] = []
+    for option in intake.collect_options(raw.splitlines()):
+        buchstabe, _, text = option.partition(" — ")
+        if text:
+            aus_volltext.append((buchstabe.strip().upper(), text.strip()))
+    aus_auszug = ui.parse_options(entry.get("options_excerpt", ""))
+    return aus_volltext if len(aus_volltext) >= len(aus_auszug) else aus_auszug
+
+
 def entry_text(settings: Settings, entry: dict) -> str:
     """Rohtext eines Eintrags — der Kontext, den Lukas beim Klicken sieht."""
     path = Path(entry["source_path"])
@@ -160,13 +177,14 @@ class Handler(BaseHTTPRequestHandler):
                 rest = offen
             entry = rest[0] if rest else None
         if entry is not None:
-            entry = dict(entry, _raw=entry_text(self.settings, entry))
+            roh = entry_text(self.settings, entry)
+            entry = dict(entry, _raw=roh, _optionen=options_of(entry, roh))
         verbleibend = len([e for e in offen if e["key"] not in self.skipped])
         self._send(ui.klick(entry, verbleibend, self._guard()))
 
     def _register(self, suche: str) -> None:
         index = chain.build_index(self.settings)
-        items = chain.decided_entries(index)
+        items = chain.register_entries(self.settings, index)
         needle = suche.strip().lower()
         if needle:
             items = [

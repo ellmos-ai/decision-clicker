@@ -102,7 +102,7 @@ def _is_heading(line: str) -> str | None:
     return None
 
 
-def _collect_options(block: list[str]) -> list[str]:
+def collect_options(block: list[str]) -> list[str]:
     """Optionen sammeln — `[A] …`, `- A — …`, `A: …`, `Option A: …`."""
     optionen: list[str] = []
     laufend: list[str] = []
@@ -191,7 +191,7 @@ def parse(path: Path) -> list[IntakeEntry]:
         eintraege.append(IntakeEntry(
             entry_id=entry_id, title=" ".join(titel.split()), path=path,
             start=start, end=end, raw="".join(block).rstrip(), fields=felder,
-            optionen=_collect_options(block), decision=entscheidung,
+            optionen=collect_options(block), decision=entscheidung,
             marked=TAKEN_MARK in "".join(block),
         ))
     return eintraege

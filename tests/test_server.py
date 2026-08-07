@@ -171,3 +171,43 @@ def test_gesundheitsauskunft_ist_maschinenlesbar(server):
     daten = json.loads(roh)
     assert daten["ok"] is True
     assert "offen" in daten["counts"]
+
+
+# ---------------------------------------------------------------------------
+# Regressionen aus dem Livecheck vom 2026-08-07
+# ---------------------------------------------------------------------------
+def test_lange_optionslisten_werden_vollstaendig_angeboten(server):
+    """Der Index kuerzt auf 400 Zeichen — die Knoepfe duerfen das nicht erben."""
+    url, kette = server
+    lang = "x" * 260
+    sende(f"{url}/api/new", {
+        "title": "Sehr ausfuehrliche Optionen",
+        "optionen": f"A — {lang}\nB — {lang}\nC — kurz und wichtig"})
+    index = chain.build_index(kette)
+    eintrag = [e for e in chain.open_entries(index)
+               if e["title"] == "Sehr ausfuehrliche Optionen"][0]
+    assert "…" in eintrag["options_excerpt"], "Auszug muesste gekuerzt sein"
+
+    _status, seite = hole(f"{url}/klick?key={eintrag['key']}")
+    for buchstabe in ("A", "B", "C"):
+        assert f'name="choice" value="{buchstabe}"' in seite, f"Option {buchstabe} fehlt"
+    assert "kurz und wichtig" in seite
+
+
+def test_register_zeigt_fundstellen(server):
+    url, kette = server
+    from decision_clicker import intake
+    intake.takeover(kette, on="2026-08-07")
+    _status, seite = hole(f"{url}/register")
+    assert "Fundstelle(n)" in seite
+    assert "Desktop/TO-DECIDE-USER.txt" in seite, "Postfach-Fundstelle fehlt im Register"
+
+
+def test_register_fuehrt_jede_id_nur_einmal(server):
+    import re
+    url, kette = server
+    from decision_clicker import intake
+    intake.takeover(kette, on="2026-08-07")
+    _status, seite = hole(f"{url}/register?q=D-20990805")
+    ids = re.findall(r"<tr><td><code>(D-\S+?)</code>", seite)
+    assert len(ids) == len(set(ids)), f"ID doppelt im Register: {ids}"

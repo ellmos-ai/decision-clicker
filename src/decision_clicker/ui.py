@@ -161,7 +161,7 @@ def klick(entry: dict | None, rest: int, hinweis: str = "") -> bytes:
         )
         return layout("Durchklicken", body, "klick")
 
-    optionen = parse_options(entry.get("options_excerpt", ""))
+    optionen = entry.get("_optionen") or parse_options(entry.get("options_excerpt", ""))
     empfehlung = (entry.get("recommendation_excerpt") or "").strip()
     treffer = RECOMMENDED_RE.match(empfehlung)
     empf_buchstabe = treffer.group(1).upper() if treffer else ""
