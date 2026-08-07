@@ -166,3 +166,46 @@ def test_intake_ueber_http_uebernimmt(server):
     assert status == 200 and daten["ok"] is True
     assert len(daten["uebernommen"]) == 3
     assert "D-20260806-001" in {e["id"] for e in chain.open_entries(chain.build_index(kette))}
+
+
+# ---------------------------------------------------------------------------
+# Weg 4: die Fassade, die auch das Unified-GUI-Panel konsumiert
+# ---------------------------------------------------------------------------
+def test_fassade_bietet_alles_was_eine_oberflaeche_braucht(kette: Settings):
+    from decision_clicker.api import DecisionClicker
+    c = DecisionClicker(kette.chain_dir)
+    assert c.usable() is True
+    stand = c.status()
+    assert {"chain_dir", "counts", "next_id", "target_file",
+            "intake_pending", "foreign_locks"} <= set(stand)
+
+    neu = c.create("Über die Fassade", optionen=["A — x", "B — y"], empfehlung="A — weil")
+    detail = c.detail(neu["id"])
+    assert [o["letter"] for o in detail["optionen"]] == ["A", "B"]
+    assert detail["recommended"] == "A"
+    assert detail["raw"].startswith(neu["id"])
+
+    ergebnis = c.decide(neu["id"], "B", "per Fassade")
+    assert ergebnis["value"] == "[B — per Fassade]"
+    assert any(e["id"] == neu["id"] for e in c.register())
+
+
+def test_fassade_schuetzt_vor_veralteter_zeilennummer(kette: Settings):
+    """Der `expected_id`-Riegel: sonst landet die Entscheidung im falschen Eintrag."""
+    from decision_clicker import writer
+    eintrag = chain.open_entries(chain.build_index(kette))[0]
+    pfad = Path(eintrag["source_path"])
+    stand = pfad.read_bytes()
+    with pytest.raises(writer.WriteError, match="veraltet"):
+        writer.fill_decision(kette, pfad, eintrag["source_line"], "A",
+                             expected_id="D-19990101-999", on="2026-08-07")
+    assert pfad.read_bytes() == stand
+
+
+def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings):
+    from decision_clicker.api import DecisionClicker, WriteError
+    (kette.chain_dir / "LOCK.fremd.txt").write_text("belegt", encoding="utf-8")
+    c = DecisionClicker(kette.chain_dir)
+    assert c.status()["foreign_locks"] == ["LOCK.fremd.txt"]
+    with pytest.raises(WriteError, match="Fremde Sperre"):
+        c.create("Gesperrt")

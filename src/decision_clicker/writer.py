@@ -108,6 +108,7 @@ def fill_decision(
     choice: str,
     note: str = "",
     *,
+    expected_id: str | None = None,
     on: str | None = None,
     make_backup: bool = True,
 ) -> dict:
@@ -115,10 +116,24 @@ def fill_decision(
 
     Genau eine Zeile wird ersetzt; genau zwei Zeilen (leer + Datum) kommen
     dahinter. Ein bereits gefuelltes Feld wird nicht ueberschrieben.
+
+    `expected_id` ist der Schutz gegen veraltete Zeilennummern: Ein Aufrufer,
+    der aus einem zwischengespeicherten Index kommt, kann auf eine Zeile
+    zeigen, an der inzwischen ein ANDERER Eintrag steht. Ohne diese Pruefung
+    wuerde die Entscheidung dann in den falschen Eintrag geschrieben.
     """
     text, has_bom = _read(path)
     lines = text.splitlines(keepends=True)
     start, end = entry_bounds(settings, lines, start_line)
+
+    if expected_id:
+        kopf = lines[start].rstrip("\r\n")
+        if expected_id not in kopf:
+            raise WriteError(
+                f"{path.name}:{start_line} traegt nicht mehr {expected_id} "
+                f"(dort steht jetzt: {kopf[:70]!r}) — Ansicht ist veraltet, "
+                "bitte neu laden."
+            )
     newline = _newline_of(lines[start:end]) or _newline_of(lines)
 
     field_index = None
