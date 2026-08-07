@@ -120,6 +120,12 @@ zitierte Zeile `ENTSCHEIDUNG DES USERS:` und würde diese füllen statt der echt
 
 Ein bereits entschiedener Eintrag wird **nie** überschrieben (HTTP 409).
 
+**Die Optionsknöpfe kommen aus dem Volltext, nicht aus dem Index.** Der Index
+kürzt `options_excerpt` auf 400 Zeichen; bei ausführlichen Einträgen fiel dadurch
+die letzte Option unter den Tisch und war schlicht nicht anklickbar (aufgefallen
+an `D-20260806-001`, wo Option C fehlte). Genommen wird die längere der beiden
+Lesarten — `tests/test_server.py` hält das als Regression fest.
+
 **Warum die Leerzeile vor dem Datum:** Der Kettenparser sammelt Feldwerte
 mehrzeilig bis zur nächsten Leerzeile. Ohne sie würde das Datum in den
 Entscheidungswert gezogen und im Index-Report als Teil der Entscheidung
