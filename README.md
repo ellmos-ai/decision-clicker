@@ -32,9 +32,77 @@ python -m decision_clicker --check    # nur nachsehen, nichts starten
 | **Übersicht** (`/`) | Zähler je Statusklasse, Liste aller offenen Entscheidungen |
 | **Durchklicken** (`/klick`) | Eine Entscheidung pro Ansicht: Titel, Kontext, Optionen als Knöpfe, Empfehlung hervorgehoben, Freitext-Anmerkung, „Später entscheiden" |
 | **Einstellen** (`/neu`) | Formular für eine neue Entscheidung; die ID wird kollisionssicher vergeben |
-| **Register** (`/register`) | Durchsuchbare Liste aller getroffenen Entscheidungen aus Kette, DECIDED-AND-DONE und Archiv |
+| **Register** (`/register`) | Durchsuchbare Liste aller getroffenen Entscheidungen aus Kette, DECIDED-AND-DONE, Archiv und Desktop-Postfach — je ID **eine** Zeile mit allen Fundstellen |
 
-Dazu `/api/health` (Kurzstatus als JSON) und `/api/index` (vollständiger Index).
+Dazu `/api/health` (Kurzstatus als JSON), `/api/index` (vollständiger Index) und
+`/api/intake` (Postfach-Stand bzw. Übernahme per POST).
+
+---
+
+## Architektur: was führt, was ist Cache
+
+**Die TXT-Kette ist die Quelle der Wahrheit.** Menschen- und agentenlesbar; jeder
+Agent kann weiterhin per Datei nach Konvention einstellen, ohne dieses Werkzeug
+zu kennen. Nichts Bestehendes bricht.
+
+`decisions.index.json` und `INDEX-REPORT.md` sind **Index und Cache** — jederzeit
+aus den Dateien neu erzeugbar und **nie führend**. Der Clicker hält keine eigene
+Datenbank; er liest bei jedem Aufruf frisch und schreibt den Index nur nach.
+
+## Einstellprozess — drei Wege, ein Ziel
+
+Alle drei erzeugen konventionsgemäßes TXT **in der Kette** (nie auf dem Desktop)
+und vergeben die ID kollisionssicher.
+
+1. **UI-Formular** — Seite „Einstellen" (`/neu`).
+2. **Lokale API** — `POST http://127.0.0.1:8096/api/new` mit
+   `Content-Type: application/json`; Antwort enthält die vergebene ID:
+   ```json
+   {"title": "…", "frage": "…", "optionen": ["A — …", "B — …"],
+    "empfehlung": "A — …", "kontext": "…", "quelle": "…", "scope": "global"}
+   ```
+   Ebenso `POST /api/decide` (`{"key": "D-…", "choice": "B", "note": "…"}`).
+3. **CLI** —
+   ```
+   python -m decision_clicker add "Titel" --frage "…" \
+       --option "A — …" --option "B — …" --empfehlung "A — …" --json
+   ```
+   `--dry-run` zeigt den Eintrag, ohne zu schreiben.
+
+---
+
+## Desktop-Postfach (Intake)
+
+`~/OneDrive/Desktop/TO-DECIDE-USER.txt` ist **keine zweite Kanonik**. Die
+Migration vom 23.07. hat `_control-center/_DECISIONS` zur einen Ablage gemacht;
+die Desktop-Datei wird nur weiter von Automationen beschrieben, die das noch
+nicht mitbekommen haben. Die Verknüpfung `Desktop\_DECISIONS.lnk` zeigt bereits
+auf die Kette (verifiziert am 07.08.).
+
+Der Clicker behandelt die Datei deshalb als **Postfach**:
+
+- Bei jedem Serverstart und auf der Übersicht wird sie **gelesen** (ein GET
+  schreibt nie); neue Einträge erscheinen als Banner mit Knopf.
+- Beim Übernehmen wandern **offene** Einträge in die Kette, **bereits
+  entschiedene** als Beleg nach `DECIDED-AND-DONE.md` — die ursprüngliche D-ID
+  bleibt in beiden Fällen erhalten.
+- Im Postfach wird der Eintrag mit
+  `→ ÜBERNOMMEN nach _control-center/_DECISIONS (Datum)` markiert. **Rein
+  additiv:** nichts wird gelöscht oder umformatiert, damit Nachzügler-Automationen
+  weiter hineinschreiben dürfen.
+- Ein zweiter Lauf übernimmt nichts doppelt.
+
+Manuell: `python -m decision_clicker intake [--dry-run]`.
+
+**Warum ein eigener Scanner statt `decisions_index.py`:** Im Postfach liegt ein
+Fremdformat, das der Kettenparser nicht als Eintrag erkennt — ein Block, der mit
+`ID: D-…` beginnt statt mit der ID in Spalte 0. Genau so lag am 07.08. eine
+**offene** Entscheidung (`D-20260806-001`, abc/L4-Uniformitätstyp) unsichtbar im
+Postfach. `tests/test_intake.py` hält diese Begründung als Test fest.
+
+Der Originalwortlaut wird bei der Übernahme vollständig mitgenommen und mit
+`| ` zitiert. Das ist nicht Kosmetik: ohne den Präfix träfe der Writer auf die
+zitierte Zeile `ENTSCHEIDUNG DES USERS:` und würde diese füllen statt der echten.
 
 ---
 
@@ -127,6 +195,23 @@ zurück; das Protokoll landet in `_decision-archive/`.
 |---|---|
 | `tools/seed_alltagsorganisation.py` | Stellt die Alltagsorganisations-Entscheidungen (E01–E07 plus Briefing vom 07.08.) ein. Idempotent, `--dry-run` zeigt nur. Beantwortet nichts. |
 | `tools/selftest_http.py` | Selbsttest am Echtsystem, siehe oben. |
+
+---
+
+## Folgearbeiten (nicht Teil dieses Werkzeugs)
+
+**Automationen-Sweep — offen, gehört dem Operator.** Solange Automationen auf den
+Desktop-Pfad schreiben, füllt sich das Postfach immer wieder. Der Clicker fängt
+das auf, behebt es aber nicht. Umzustellen auf die Kette bzw. den neuen API-/CLI-Weg:
+
+- `.RESEARCH/CLAUDE.md` — die Zenodo-Konvention nennt wörtlich den Desktop-Pfad
+  für neue Upload-Anfragen (belegt).
+- Vermutlich weitere Automations-Prompts von Gemini/Antigravity und Codex —
+  ungeprüft, muss der Sweep feststellen.
+
+Prüfbar mit `python -m decision_clicker --check`: Zeigt die Zeile
+„Desktop-Postfach: N noch nicht übernommen" dauerhaft Zugänge, ist der Sweep
+noch nicht durch.
 
 ---
 

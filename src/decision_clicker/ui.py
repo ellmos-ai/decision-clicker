@@ -110,8 +110,27 @@ def numbers(data: dict[str, int]) -> str:
     return f'<div class="zahlen">{zellen}</div>'
 
 
-def home(data: dict[str, int], offen: list[dict], hinweis: str = "") -> bytes:
+def intake_banner(offene: list[dict]) -> str:
+    """Postfach-Hinweis mit Übernahme-Knopf — GET schreibt nie von selbst."""
+    if not offene:
+        return ""
+    zeilen = "".join(
+        f"<li><code>{escape(e['id'])}</code> — {escape(e['titel'])} "
+        f"<span class=\"tag\">→ {escape(e['ziel'])}</span></li>" for e in offene)
+    return (f'<div class="card"><h2>Desktop-Postfach: {len(offene)} neue Einträge</h2>'
+            "<p>Automationen schreiben weiterhin nach "
+            "<code>Desktop\\TO-DECIDE-USER.txt</code>. Die Einträge werden in die Kette "
+            "übernommen und dort vermerkt — im Postfach wird nichts gelöscht.</p>"
+            f"<ul>{zeilen}</ul>"
+            '<form method="post" action="/api/intake"><div class="reihe">'
+            '<button class="prim" type="submit">Jetzt übernehmen</button>'
+            "</div></form></div>")
+
+
+def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
+         postfach: list[dict] | None = None) -> bytes:
     kopf = f'<div class="warn">{escape(hinweis)}</div>' if hinweis else ""
+    kopf += intake_banner(postfach or [])
     if offen:
         zeilen = "".join(
             f'<tr><td><a href="/klick?key={escape(e["key"])}"><code>{escape(e["key"])}</code></a></td>'
@@ -214,11 +233,13 @@ def register(eintraege: list[dict], suche: str) -> bytes:
             f"<tr><td><code>{escape(e['key'])}</code></td><td>{escape(e['date'])}</td>"
             f"<td>{escape(e['title'])}</td>"
             f"<td>{escape(e['decision_field_raw'] or '—')}</td>"
-            f"<td><span class=\"tag\">{escape(e['status_class'])}</span></td></tr>"
+            f"<td><span class=\"tag\">{escape(e['status_class'])}</span></td>"
+            "<td>" + " ".join(f"<code>{escape(f)}</code>"
+                              for f in e.get("fundstellen", [e["source_file"]])) + "</td></tr>"
             for e in eintraege
         )
         tabelle = ("<table><tr><th>ID</th><th>Datum</th><th>Titel</th>"
-                   f"<th>Entscheidung</th><th>Status</th></tr>{zeilen}</table>")
+                   f"<th>Entscheidung</th><th>Status</th><th>Fundstelle(n)</th></tr>{zeilen}</table>")
     else:
         tabelle = '<div class="leer">Kein Treffer.</div>'
     body = f"""<h1>Register</h1>

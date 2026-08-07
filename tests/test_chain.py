@@ -56,14 +56,23 @@ def test_id_vergabe_beachtet_auch_archiv_und_done(kette: Settings):
 
 
 def test_zweite_id_am_selben_tag_zaehlt_hoch(kette: Settings):
+    """Aufsteigend und frei — aber NICHT zwingend +1.
+
+    Bereits verbrauchte Nummern (etwa aus einem Selbsttest, dessen Eintrag nur
+    noch im Archiv steht) werden übersprungen. Genau das ist erwünscht: eine
+    einmal vergebene ID wird nie ein zweites Mal ausgegeben.
+    """
     index = chain.build_index(kette)
     tag = date(2026, 8, 7)
     erste = chain.next_id(index, tag)
     ziel = chain.target_part(kette)
     writer.append_entry(kette, ziel, writer.render_entry(erste, "Testeintrag eins"))
-    zweite = chain.next_id(chain.build_index(kette), tag)
+
+    nachher = chain.build_index(kette)
+    zweite = chain.next_id(nachher, tag)
     assert zweite != erste
-    assert int(zweite.split("-")[-1]) == int(erste.split("-")[-1]) + 1
+    assert zweite not in chain.known_ids(nachher)
+    assert int(zweite.split("-")[-1]) > int(erste.split("-")[-1])
 
 
 # ---------------------------------------------------------------------------
