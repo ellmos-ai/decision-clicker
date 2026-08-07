@@ -1,0 +1,20 @@
+PRIVATE — Publikationssperre MIT Aufhebebedingungen (LOCK-SYSTEM.md, Abschnitt PRIVATE.txt)
+
+Anlass:  Visibility-Policy 2026-08-07 + [U 2026-08-08: „decision clicker soll ja schon
+         auch für alle werden"] — ZIEL IST DIE VERÖFFENTLICHUNG. Diese Sperre schützt
+         nur den Übergangszustand, damit niemand das Repo VOR Erfüllung der Bedingungen
+         versehentlich public stellt.
+Scope:   Dieses Repository (decision-clicker).
+
+AUFHEBEBEDINGUNGEN (alle vier; danach darf gemäß Spec auch ein Agent die Datei
+entfernen und den regulären Release-Weg gehen):
+1. Privates GitHub-Remote als Sicherung existiert und ist gepusht (aktuell: KEIN Remote —
+   Code ungesichert, siehe VISIBILITY-POLICY.md §5).
+2. Neutralisierung: persönliche Ketten-/Systempfade (_control-center/_DECISIONS,
+   Nutzerpfade) sind konfigurierbar statt hartkodiert; keine persönlichen Beispieldaten
+   oder Entscheidungsinhalte im Repo/Verlauf.
+3. Privacy-Sweep über Code, Doku UND Git-Historie ist dokumentiert bestanden.
+4. Release-Standard erfüllt: /repo-publish-check bestanden (README/Lizenz/llms.txt nach
+   Pipeline-Konvention).
+
+Bis dahin: nicht public stellen, nicht in Registries/Kataloge eintragen.
