@@ -1,0 +1,13 @@
+PRIVATE — Nie-öffentlich-Sperre (LOCK-SYSTEM.md, Abschnitt PRIVATE.txt)
+
+Anlass:  Visibility-Policy 2026-08-07 + [U 2026-08-07/08: besondere Sicherung der
+         privat bleibenden Repos gegen versehentliches Public-Stellen].
+Scope:   Dieses Repository (decision-clicker) — Kernlogik + UI der persönlichen
+         Entscheidungskette _control-center/_DECISIONS.
+
+Enthält die Bedienlogik für persönliche Entscheidungsdaten von Lukas.
+MIT AUFHEBEBEDINGUNG: Eine Veröffentlichung ist erst zulässig, wenn (1) der User sie
+ausdrücklich beschließt UND (2) ein Privacy-Sweep belegt, dass weder Kettenpfade noch
+persönliche Beispieldaten im Repo liegen. Bis dahin: nie public.
+Hinweis: Dieses Repo hat KEIN Remote — offener Punkt „privates GitHub-Remote als
+Sicherung anlegen" (User-Entscheidung, siehe VISIBILITY-POLICY.md §5).
