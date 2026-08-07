@@ -1,6 +1,6 @@
 # Decision-Clicker
 
-Lokales Klick-Werkzeug für die zentrale Entscheidungskette
+Kernlogik **und** Mini-Oberfläche für die zentrale Entscheidungskette
 `~/OneDrive/.TOPICS/_control-center/_DECISIONS`.
 
 Agenten und Sessions **stellen Entscheidungen ein**, Lukas **klickt sich durch**,
@@ -8,7 +8,25 @@ jede Entscheidung wird **dokumentiert** und bleibt **langfristig auffindbar**.
 
 ---
 
-## Starten
+## Zwei Oberflächen, ein Kern
+
+Die Kernlogik (Ketten-Parser, konservativer Writer, Index, Postfach-Scan,
+ID-Vergabe) ist **GUI-unabhängig** und liegt hinter der Fassade
+`decision_clicker.api.DecisionClicker`. Darauf sitzen zwei Oberflächen:
+
+| Oberfläche | Rolle | Start |
+|---|---|---|
+| **Panel P10 der ellmos Unified GUI** | **die reguläre Oberfläche** — Entscheidungen stehen dort neben Locks, Tickets, Tasks und Skills | `python -m unified_gui` im Modul `.RUNTIME/ellmos-unified-gui` |
+| **Mini-UI dieses Pakets** (Port 8096) | **Rückfall** — läuft ohne FastAPI und ohne die Unified GUI, falls die nicht verfügbar ist | `START.bat` |
+
+Beide schreiben durch dieselbe Fassade in dieselbe Kette; es gibt keinen zweiten
+Schreibpfad und keinen zweiten Parser. Die Unified GUI bindet die Lib über ihren
+`DecisionsAdapter` ein und meldet dann die Capability `DECISIONS_RW`; fehlt
+dieses Paket, degradiert P10 auf seine frühere read-only-Sicht (dort [D11]).
+
+---
+
+## Starten (Mini-UI / Rückfall)
 
 Doppelklick auf **`START.bat`** — der Browser öffnet sich von selbst auf
 <http://127.0.0.1:8096>. Beenden mit `Strg+C` im schwarzen Fenster.
@@ -138,25 +156,25 @@ gefallen ist.
 
 ---
 
-## Warum eigenständig und nicht im `ellmos-unified-gui`
+## Warum der Kern hier liegt und die Oberfläche dort
 
-Dort existiert seit dem 01.08. ein P10-Decisions-Panel. Es bleibt, wie es ist:
+Ursprünglich war dies ein eigenständiges Werkzeug, weil das P10-Panel der
+Unified GUI sich im eigenen Docstring darauf festlegte, **nie zu schreiben**.
+Auf Weichenstellung des Nutzers (07.08.) ist die reguläre Oberfläche jetzt das
+Panel — der Kern blieb hier:
 
-- Sein `DecisionsAdapter` sagt im eigenen Docstring zu, **nie zu schreiben** und
-  keine zweite Quelle der Wahrheit zu halten. Ein Schreibpfad hätte genau diese
-  Zusage gebrochen.
-- Die Unified GUI ist FastAPI + Jinja2 und trägt Adapter für BACH, das bis
-  ~12.08. judging-gesperrt ist. Der Clicker soll davon unabhängig laufen.
-- Sie liegt in OneDrive mit eigenem `.git` — neue Arbeit gehört nach Plan D in
-  einen lokalen Klon.
+- **Die Logik ist GUI-unabhängig nutzbar.** CLI und lokale API funktionieren
+  ohne FastAPI, ohne Browser und ohne die Unified GUI. Ein Agent, der eine
+  Entscheidung einstellen will, braucht keine Oberfläche.
+- **Kein Doppelbau.** Die Unified GUI konsumiert diese Lib, statt Parser,
+  Writer und Postfach-Logik ein zweites Mal zu schreiben.
+- **Plan D.** Neue Arbeit gehört in einen lokalen Klon; die Unified GUI liegt
+  aus historischen Gründen in OneDrive mit eigenem `.git`.
 
-Der Clicker folgt stattdessen dem Muster des **lock-watchers**: stdlib
-`http.server`, keine Abhängigkeit, `START.bat`, eigener Port. Arbeitsteilung:
-**P10 zeigt, der Clicker schreibt.**
-
-Den Kettenparser baut er ausdrücklich **nicht** nach — er lädt
+Den Kettenparser baut dieses Paket ausdrücklich **nicht** nach — es lädt
 `_DECISIONS/_tools/decisions_index.py` als Modul. Ein zweiter, leicht
-abweichender Parser wäre der schlimmere Fehler.
+abweichender Parser wäre der schlimmere Fehler. Damit gibt es über beide
+Oberflächen hinweg genau einen Parser und genau einen Schreibpfad.
 
 ---
 
