@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 _local/
+
+# Testfixture mit einem eingefrorenen Auszug der ECHTEN Entscheidungskette
+# (reale Projektnamen, Daten, offene Fragen) — bewusst lokal, nie versioniert.
+# Siehe PRIVATE.txt Aufhebebedingung 2. Ohne diese Datei skippen/fehlschlagen
+# einige Tests in tests/test_intake.py (pytest.skip bzw. FileNotFoundError in
+# tests/conftest.py::postfach / frisches_postfach) — das ist beabsichtigt.
+tests/data/postfach_2026-08-07.txt
