@@ -8,11 +8,19 @@ Scope:   Dieses Repository (decision-clicker).
 
 AUFHEBEBEDINGUNGEN (alle vier; danach darf gemäß Spec auch ein Agent die Datei
 entfernen und den regulären Release-Weg gehen):
-1. Privates GitHub-Remote als Sicherung existiert und ist gepusht (aktuell: KEIN Remote —
-   Code ungesichert, siehe VISIBILITY-POLICY.md §5).
-2. Neutralisierung: persönliche Ketten-/Systempfade (_control-center/_DECISIONS,
-   Nutzerpfade) sind konfigurierbar statt hartkodiert; keine persönlichen Beispieldaten
-   oder Entscheidungsinhalte im Repo/Verlauf.
+1. [ERFÜLLT 2026-08-08] Privates GitHub-Remote als Sicherung existiert und ist
+   gepusht: https://github.com/ellmos-ai/decision-clicker (private). Vor dem
+   ersten Push wurde `tests/data/postfach_2026-08-07.txt` — ein eingefrorener
+   Auszug der ECHTEN Entscheidungskette mit realen Projektnamen/Daten/einer
+   offenen Forschungsfrage — per `git filter-repo` restlos aus der gesamten
+   Historie entfernt (nie zuvor gepusht, also folgenlos) und lokal nur noch
+   gitignored auf der Platte gehalten; Remote-Baum bestätigt frei davon.
+2. Neutralisierung (weiterhin offen, bewusst vertagt — siehe Nutzerentscheidung
+   2026-08-08 „später, erst sichern"): persönliche Ketten-/Systempfade
+   (`DEFAULT_CHAIN` in `src/decision_clicker/config.py` zeigt weiterhin
+   hartkodiert auf `C:\Users\User\OneDrive\...\_DECISIONS`) sind noch NICHT
+   konfigurierbar gemacht. Die reale Entscheidungs-Testfixtur (siehe Punkt 1)
+   ist bereits aus Repo/Verlauf entfernt.
 3. Privacy-Sweep über Code, Doku UND Git-Historie ist dokumentiert bestanden.
 4. Release-Standard erfüllt: /repo-publish-check bestanden (README/Lizenz/llms.txt nach
    Pipeline-Konvention).
