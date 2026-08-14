@@ -1,3 +1,5 @@
+<img src="assets/banner.png" width="100%" alt="decision-clicker Banner">
+
 # Decision-Clicker
 
 Kernlogik **und** Mini-Oberfläche für die zentrale Entscheidungskette
