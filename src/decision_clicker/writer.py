@@ -439,12 +439,15 @@ def append_entry(
             letzte_ueberschrift = index
 
     insert_at = len(lines)
-    for index in range(letzte_ueberschrift + 1, len(lines)):
-        if POINTER_RE.match(lines[index]):
-            insert_at = index
-            while insert_at > 0 and SEPARATOR_RE.match(lines[insert_at - 1].rstrip("\r\n")):
-                insert_at -= 1
-            break
+    if letzte_ueberschrift >= 0:
+        for index in range(letzte_ueberschrift + 1, len(lines)):
+            if POINTER_RE.match(lines[index]):
+                insert_at = index
+                while insert_at > 0 and SEPARATOR_RE.match(
+                    lines[insert_at - 1].rstrip("\r\n")
+                ):
+                    insert_at -= 1
+                break
 
     backup_path = backup(path, settings, tag="new") if make_backup else None
     block = rendered.replace("\r\n", "\n").replace("\n", newline)
