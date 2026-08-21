@@ -13,7 +13,7 @@ import pytest
 
 from decision_clicker import chain, writer
 from decision_clicker.config import Settings
-from decision_clicker.server import Handler, serve
+from decision_clicker.server import Handler, RequestRejected, _safe_redirect_target, serve
 
 
 @pytest.fixture
@@ -62,6 +62,19 @@ def sende_json(url: str, daten: dict, *, include_guard: bool = True,
             return antwort.status, json.loads(antwort.read().decode("utf-8"))
     except urllib.error.HTTPError as fehler:
         return fehler.code, fehler.read().decode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "target",
+    ("https://example.test/", "//example.test/", "/klick\r\nX-Test: injected"),
+)
+def test_redirect_target_rejects_external_or_header_injection(target):
+    with pytest.raises(RequestRejected):
+        _safe_redirect_target(target)
+
+
+def test_redirect_target_accepts_local_encoded_query():
+    assert _safe_redirect_target("/klick?key=D-20260822-001") == "/klick?key=D-20260822-001"
 
 
 # ---------------------------------------------------------------------------
