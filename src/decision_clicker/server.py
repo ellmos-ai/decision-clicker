@@ -10,7 +10,7 @@ import json
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from . import chain, intake, ui, writer
 from .api import options_of
@@ -22,6 +22,15 @@ JSON_WRITE_HEADER = "X-Decision-Clicker"
 
 class RequestRejected(writer.WriteError):
     """Browser- oder Host-Prüfung hat den Schreibrequest abgewiesen."""
+
+
+def _safe_redirect_target(target: str) -> str:
+    """Allow only local absolute-path redirects without header delimiters."""
+    if not target.startswith("/") or target.startswith("//"):
+        raise RequestRejected("Weiterleitungsziel muss ein lokaler Pfad sein.")
+    if "\r" in target or "\n" in target:
+        raise RequestRejected("Ungültige Zeichen im Weiterleitungsziel.")
+    return target
 
 
 def entry_text(settings: Settings, entry: dict) -> str:
@@ -71,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _redirect(self, target: str) -> None:
         self.send_response(303)
-        self.send_header("Location", target)
+        self.send_header("Location", _safe_redirect_target(target))
         self.send_header("Content-Length", "0")
         self.send_header("Cache-Control", "no-store")
         self._security_headers()
@@ -315,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         print(f"  ZURÜCKGESETZT {key}")
-        self._antwort(f"/klick?key={key}", {"ok": True, "id": key, **ergebnis})
+        self._antwort(f"/klick?{urlencode({'key': key})}", {"ok": True, "id": key, **ergebnis})
 
     def _new(self, form: dict[str, str]) -> None:
         if blocker := self._guard():
@@ -342,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         print(f"  EINGESTELLT {entry_id} -> {ziel.name}")
-        self._antwort(f"/klick?key={entry_id}",
+        self._antwort(f"/klick?{urlencode({'key': entry_id})}",
                       {"ok": True, "id": entry_id, "titel": title, **ergebnis})
 
     def _intake(self) -> None:
