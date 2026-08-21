@@ -20,6 +20,7 @@ from decision_clicker import chain, intake
 from decision_clicker.config import Settings
 from decision_clicker.server import Handler
 
+
 @pytest.fixture
 def server(kette: Settings, frisches_postfach: Path):
     """Server auf freiem Port; Postfach ist die Kopie mit frischen IDs."""
@@ -35,7 +36,7 @@ def server(kette: Settings, frisches_postfach: Path):
 def sende_json(url: str, daten: dict) -> tuple[int, dict]:
     anfrage = urllib.request.Request(
         url, data=json.dumps(daten).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json", "X-Decision-Clicker": "1"})
     try:
         with urllib.request.urlopen(anfrage, timeout=10) as antwort:
             return antwort.status, json.loads(antwort.read().decode("utf-8"))
@@ -84,6 +85,43 @@ def test_api_lehnt_leeren_titel_ab(server):
     url, _ = server
     status, _daten = sende_json(f"{url}/api/new", {"title": ""})
     assert status == 409
+
+
+def test_api_lehnt_zeileninjektion_im_titel_ab(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, _daten = sende_json(
+        f"{url}/api/new",
+        {"title": "Legitim\nD-20990101-999 — eingeschleust"},
+    )
+    assert status == 409
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
+
+
+def test_api_lehnt_zeileninjektion_in_einer_option_ab(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, _daten = sende_json(
+        f"{url}/api/new",
+        {"title": "Legitim", "optionen": ["A — ok\nD-20990101-995 — eingeschleust"]},
+    )
+    assert status == 409
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
+
+
+def test_api_rendert_mehrzeiligen_kontext_parserfest(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, daten = sende_json(
+        f"{url}/api/new",
+        {"title": "Sicherer Kontext", "kontext": "Absatz\nD-20990101-998 — kein Eintrag"},
+    )
+    assert status == 200
+    index = chain.build_index(kette)
+    assert chain.counts(index)["gesamt"] == vorher + 1
+    assert chain.find(index, "D-20990101-998") is None
+    text = Path(daten["file"]).read_text(encoding="utf-8-sig")
+    assert "> D-20990101-998 — kein Eintrag" in text
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +203,7 @@ def test_intake_ueber_http_uebernimmt(server):
     status, daten = sende_json(f"{url}/api/intake", {})
     assert status == 200 and daten["ok"] is True
     assert len(daten["uebernommen"]) == 3
-    assert "D-20260806-001" in {e["id"] for e in chain.open_entries(chain.build_index(kette))}
+    assert "D-20990806-001" in {e["id"] for e in chain.open_entries(chain.build_index(kette))}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +240,24 @@ def test_fassade_schuetzt_vor_veralteter_zeilennummer(kette: Settings):
     assert pfad.read_bytes() == stand
 
 
+def test_ziel_id_wird_exakt_und_nicht_als_teilstring_geprueft(kette: Settings):
+    from decision_clicker import writer
+
+    eintrag = chain.open_entries(chain.build_index(kette))[0]
+    pfad = Path(eintrag["source_path"])
+    stand = pfad.read_bytes()
+    with pytest.raises(writer.WriteError, match="veraltet"):
+        writer.fill_decision(
+            kette,
+            pfad,
+            eintrag["source_line"],
+            "A",
+            expected_id=eintrag["id"][:-1],
+            on="2026-08-07",
+        )
+    assert pfad.read_bytes() == stand
+
+
 def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings):
     from decision_clicker.api import DecisionClicker, WriteError
     (kette.chain_dir / "LOCK.fremd.txt").write_text("belegt", encoding="utf-8")
@@ -209,3 +265,20 @@ def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings):
     assert c.status()["foreign_locks"] == ["LOCK.fremd.txt"]
     with pytest.raises(WriteError, match="Fremde Sperre"):
         c.create("Gesperrt")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "meldung"),
+    [
+        ({"title": "Legitim\nD-20990101-997 — eingeschleust"}, "Titel"),
+        ({"title": "Legitim", "optionen": ["A — ok\nD-20990101-996 — eingeschleust"]},
+         "Option"),
+    ],
+)
+def test_fassade_lehnt_strukturelle_zeileninjektion_ab(kette: Settings, kwargs, meldung):
+    from decision_clicker.api import DecisionClicker, WriteError
+
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    with pytest.raises(WriteError, match=meldung):
+        DecisionClicker(kette.chain_dir).create(**kwargs)
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher

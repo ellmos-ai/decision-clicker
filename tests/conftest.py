@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Testfixtures: gearbeitet wird ausschliesslich auf KOPIEN der echten Kette.
+"""Selbstständige Test-Fixtures für eine synthetische Entscheidungskette.
 
-Kein Test fasst `C:\\Users\\User\\OneDrive\\...\\_DECISIONS` an. Die Kopie ist
-trotzdem echt — nur so beweist der Roundtrip-Test etwas ueber die echten
-Dateien (CRLF in Teil 4, LF in Teil 1-3, gemischte Eintragsstile).
+Kein Test liest oder verändert persönliche Entscheidungsdaten. Die Fixture
+bildet den veröffentlichten Parser-Vertrag und mehrere Eintragsstile ab.
 """
 from __future__ import annotations
 
@@ -14,31 +13,18 @@ from pathlib import Path
 import pytest
 
 from decision_clicker import intake
-from decision_clicker.config import DEFAULT_CHAIN, Settings
+from decision_clicker.config import Settings
 
-QUELLE = DEFAULT_CHAIN
-POSTFACH_VORLAGE = Path(__file__).parent / "data" / "postfach_2026-08-07.txt"
-
-
-def pytest_configure(config):
-    config.addinivalue_line("markers", "echt: braucht die echte Kette als Vorlage")
-
-
-@pytest.fixture(scope="session")
-def hat_kette() -> bool:
-    return QUELLE.is_dir() and (QUELLE / "_tools" / "decisions_index.py").is_file()
+DATEN = Path(__file__).parent / "data"
+KETTEN_VORLAGE = DATEN / "chain"
+POSTFACH_VORLAGE = DATEN / "postfach_sample.txt"
 
 
 @pytest.fixture
-def kette(tmp_path: Path, hat_kette: bool) -> Settings:
-    """Vollstaendige Kopie der echten Kette in einem Temp-Ordner."""
-    if not hat_kette:
-        pytest.skip(f"Echte Kette nicht vorhanden: {QUELLE}")
+def kette(tmp_path: Path) -> Settings:
+    """Vollständige Kopie der synthetischen Vertrags-Fixture."""
     ziel = tmp_path / "_DECISIONS"
-    shutil.copytree(
-        QUELLE, ziel,
-        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"),
-    )
+    shutil.copytree(KETTEN_VORLAGE, ziel)
     return Settings(chain_dir=ziel)
 
 
@@ -58,7 +44,7 @@ def original_bytes(kette: Settings) -> dict[str, bytes]:
 
 @pytest.fixture
 def postfach(tmp_path: Path, monkeypatch) -> Path:
-    """Eingefrorener Originalstand des Desktop-Postfachs — zum Erkennen."""
+    """Synthetisches Postfach mit beiden unterstützten Eintragsformaten."""
     kopie = tmp_path / "TO-DECIDE-USER.txt"
     shutil.copy2(POSTFACH_VORLAGE, kopie)
     monkeypatch.setattr(intake, "DEFAULT_SOURCES", (kopie,))
@@ -67,12 +53,11 @@ def postfach(tmp_path: Path, monkeypatch) -> Path:
 
 @pytest.fixture
 def frisches_postfach(tmp_path: Path, monkeypatch) -> Path:
-    """Derselbe Stand mit unverbrauchten IDs — zum Uebernehmen.
+    """Derselbe Stand mit unverbrauchten IDs — zum Übernehmen.
 
-    Die Original-IDs liegen inzwischen in der echten Kette; ein Uebernahmetest
-    darauf traefe nur noch den Dedup-Zweig. Umdatiert wird von 2026 auf 2099
-    unter Beibehaltung von Monat, Tag und laufender Nummer — Struktur und
-    Formate bleiben exakt die der echten Datei.
+    Die 2026-IDs liegen bereits in der synthetischen Kette und prüfen den
+    Dedup-Zweig. Für Übernahmetests werden sie deterministisch auf 2099
+    umdatiert; Struktur und Formate bleiben identisch.
     """
     kopie = tmp_path / "TO-DECIDE-USER.txt"
     roh = POSTFACH_VORLAGE.read_bytes().decode("utf-8-sig")

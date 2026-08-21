@@ -12,15 +12,15 @@ echo   Decision-Clicker
 echo ========================================
 echo.
 
-:: Laeuft schon einer? Dann nur den Browser oeffnen, keinen zweiten starten.
+:: Läuft schon einer? Dann nur den Browser öffnen, keinen zweiten starten.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:8096/api/health' -TimeoutSec 1 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
-    echo Der Server laeuft bereits auf http://127.0.0.1:8096
+    echo Der Server läuft bereits auf http://127.0.0.1:8096
     start "" "http://127.0.0.1:8096"
     goto :EOF
 )
 
-:: Browser oeffnet sich, sobald der Server steht.
+:: Browser öffnet sich, sobald der Server steht.
 start "" /B powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:8096'"
 
 echo Starte Server auf http://127.0.0.1:8096 ...

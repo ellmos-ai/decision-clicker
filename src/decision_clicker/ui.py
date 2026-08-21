@@ -234,12 +234,13 @@ def _verlauf_zeile(e: dict) -> str:
     if e["status"] == "aktiv":
         aktion = (f'<form method="post" action="/api/undo/{escape(e["id"])}">'
                   '<button class="btn" type="submit">Rückgängig</button></form>')
+    status = "zurückgesetzt" if e["status"] == "zurueckgesetzt" else e["status"]
     return (
         f'<tr><td><code>{escape(e["id"])}</code></td>'
         f'<td>{escape(e["title"])}</td>'
         f'<td>{escape(e["choice"] or "—")}</td>'
         f'<td>{escape(e["decided_on"])}</td>'
-        f'<td><span class="tag">{escape(e["status"])}</span>{reset_hint}</td>'
+        f'<td><span class="tag">{escape(status)}</span>{reset_hint}</td>'
         f'<td>{aktion}</td></tr>'
     )
 
@@ -277,7 +278,7 @@ Ziel: <code>{escape(ziel)}</code></div>
 <label>Quelle <span class="hint">(Datei, Lauf, Briefing)</span></label>
 <input name="quelle">
 <label>Geltung <span class="hint">(leer = global)</span></label>
-<input name="scope" placeholder="global | host:ASUS-GEI | projekt:…">
+<input name="scope" placeholder="global | host:WORKSTATION | projekt:…">
 <div class="reihe"><button class="prim" type="submit">In die Kette einstellen</button>
 <a class="btn" href="/">Abbrechen</a></div>
 </form>"""

@@ -15,14 +15,18 @@ entfernen und den regulären Release-Weg gehen):
    offenen Forschungsfrage — per `git filter-repo` restlos aus der gesamten
    Historie entfernt (nie zuvor gepusht, also folgenlos) und lokal nur noch
    gitignored auf der Platte gehalten; Remote-Baum bestätigt frei davon.
-2. Neutralisierung (weiterhin offen, bewusst vertagt — siehe Nutzerentscheidung
-   2026-08-08 „später, erst sichern"): persönliche Ketten-/Systempfade
-   (`DEFAULT_CHAIN` in `src/decision_clicker/config.py` zeigt weiterhin
-   hartkodiert auf `C:\Users\User\OneDrive\...\_DECISIONS`) sind noch NICHT
-   konfigurierbar gemacht. Die reale Entscheidungs-Testfixtur (siehe Punkt 1)
-   ist bereits aus Repo/Verlauf entfernt.
-3. Privacy-Sweep über Code, Doku UND Git-Historie ist dokumentiert bestanden.
-4. Release-Standard erfüllt: /repo-publish-check bestanden (README/Lizenz/llms.txt nach
-   Pipeline-Konvention).
+2. [ERFÜLLT 2026-08-21] Persönliche Ketten-/Systempfade sind neutralisiert.
+   `DECISION_CLICKER_CHAIN` konfiguriert den Kanon explizit; der Rückfall wird
+   ohne Benutzer- oder Hostnamen aus der Laufzeitumgebung abgeleitet. Tests
+   verwenden ausschließlich synthetische Fixtures.
+3. [OFFEN: NUTZERENTSCHEIDUNG] Privacy-Sweep über aktuellen Code und Doku ist
+   bestanden; der Prüfbericht liegt gemäß Veröffentlichungs-Policy
+   ausschließlich lokal außerhalb dieses Repositories. Die kurze private
+   Git-Historie enthält noch frühere lokale Pfade, persönliche Workflow-Texte
+   und Autor-E-Mail-Metadaten. Vor Public: Historie umschreiben ODER das dort
+   dokumentierte Restrisiko ausdrücklich akzeptieren.
+4. [IN PRÜFUNG 2026-08-21] Release-Hülle ist ergänzt: README EN+DE, MIT-Lizenz,
+   llms.txt, CHANGELOG, Paketmetadaten, CI und CodeQL. Abschluss erst nach
+   grünem Remote-CI/CodeQL und dokumentiertem `/repo-publish-check`.
 
 Bis dahin: nicht public stellen, nicht in Registries/Kataloge eintragen.

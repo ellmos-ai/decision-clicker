@@ -1,0 +1,32 @@
+D-20260805-001 — Existing rollout choice
+
+STATUS: ENTSCHIEDEN, UMSETZUNG OFFEN
+SCOPE: global
+FRAGE: Soll der bestehende Rollout fortgeführt werden?
+OPTIONEN:
+- A — Fortführen
+- B — Pausieren
+
+ENTSCHEIDUNG DES USERS: [A]
+
+---
+
+D-20260806-001 — Parser compatibility
+
+STATUS: OFFEN
+SCOPE: global
+KONTEXT:
+Dieser neutrale Eintrag prüft den regulären Kettenpfad.
+
+FRAGE: Soll das kompatible Format beibehalten werden?
+
+OPTIONEN:
+- A — Beibehalten
+- B — Migrieren
+- C — Erst messen
+
+EMPFEHLUNG: A — kompatibel bleiben.
+
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---

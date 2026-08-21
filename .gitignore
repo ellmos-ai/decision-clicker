@@ -1,11 +1,22 @@
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+.verify_venv/
+venv/
+.env
+.env.*
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 _local/
 
-# Testfixture mit einem eingefrorenen Auszug der ECHTEN Entscheidungskette
-# (reale Projektnamen, Daten, offene Fragen) — bewusst lokal, nie versioniert.
-# Siehe PRIVATE.txt Aufhebebedingung 2. Ohne diese Datei skippen/fehlschlagen
-# einige Tests in tests/test_intake.py (pytest.skip bzw. FileNotFoundError in
-# tests/conftest.py::postfach / frisches_postfach) — das ist beabsichtigt.
+# Legacy real-data fixture retained on some maintainer systems; never track.
 tests/data/postfach_2026-08-07.txt

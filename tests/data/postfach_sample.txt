@@ -1,0 +1,39 @@
+D-20260805-001 — Existing rollout choice
+
+STATUS: ENTSCHIEDEN
+PROJEKT: Example rollout
+FRAGE: Soll der bestehende Rollout fortgeführt werden?
+OPTIONEN:
+- A — Fortführen
+- B — Pausieren
+
+ENTSCHEIDUNG DES USERS: [A]
+
+---
+
+D-20260805-002 — Documentation language
+
+STATUS: ENTSCHIEDEN
+PROJEKT: Example documentation
+FRAGE: Welche Sprache führt?
+OPTIONEN:
+- A — Deutsch
+- B — Englisch
+
+ENTSCHEIDUNG DES USERS: [B]
+
+---
+
+ID: D-20260806-001
+PROJEKT: Parser compatibility
+STATUS: OFFEN
+DIE FRAGE: Braucht irgendein Schritt noch eine zusätzliche Prüfung,
+bevor die kompatible Form übernommen werden kann?
+OPTIONEN:
+[A] Direkt übernehmen
+[B] Zuerst dokumentieren
+[C] Tiebreaker durch einen unabhängigen Test
+EMPFEHLUNG: B — zuerst dokumentieren.
+ENTSCHEIDUNG DES USERS:
+
+---

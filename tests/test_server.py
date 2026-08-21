@@ -13,7 +13,7 @@ import pytest
 
 from decision_clicker import chain, writer
 from decision_clicker.config import Settings
-from decision_clicker.server import Handler
+from decision_clicker.server import Handler, serve
 
 
 @pytest.fixture
@@ -37,11 +37,29 @@ def hole(url: str) -> tuple[int, str]:
         return fehler.code, fehler.read().decode("utf-8")
 
 
-def sende(url: str, daten: dict[str, str]) -> tuple[int, str]:
+def sende(url: str, daten: dict[str, str], headers: dict[str, str] | None = None) -> tuple[int, str]:
     roh = urllib.parse.urlencode(daten).encode("utf-8")
+    request = urllib.request.Request(url, data=roh, headers=headers or {})
     try:
-        with urllib.request.urlopen(url, data=roh, timeout=10) as antwort:
+        with urllib.request.urlopen(request, timeout=10) as antwort:
             return antwort.status, antwort.read().decode("utf-8")
+    except urllib.error.HTTPError as fehler:
+        return fehler.code, fehler.read().decode("utf-8")
+
+
+def sende_json(url: str, daten: dict, *, include_guard: bool = True,
+               headers: dict[str, str] | None = None) -> tuple[int, dict | str]:
+    import json
+
+    request_headers = {"Content-Type": "application/json"}
+    if include_guard:
+        request_headers["X-Decision-Clicker"] = "1"
+    request_headers.update(headers or {})
+    request = urllib.request.Request(
+        url, data=json.dumps(daten).encode("utf-8"), headers=request_headers)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as antwort:
+            return antwort.status, json.loads(antwort.read().decode("utf-8"))
     except urllib.error.HTTPError as fehler:
         return fehler.code, fehler.read().decode("utf-8")
 
@@ -66,6 +84,14 @@ def test_alle_seiten_antworten(server):
 def test_unbekannte_seite_gibt_404(server):
     url, _ = server
     assert hole(f"{url}/gibtsnicht")[0] == 404
+
+
+def test_antworten_setzen_browser_sicherheitsheader(server):
+    url, _ = server
+    with urllib.request.urlopen(f"{url}/", timeout=10) as antwort:
+        assert antwort.headers["X-Content-Type-Options"] == "nosniff"
+        assert antwort.headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in antwort.headers["Content-Security-Policy"]
 
 
 def test_klick_zeigt_genau_eine_entscheidung_mit_kontext(server):
@@ -126,11 +152,100 @@ def test_decide_ueber_json_bekommt_weiter_json_ohne_bestaetigungsseite(server):
     payload = json.dumps({"key": ziel["key"], "choice": "A", "note": ""}).encode("utf-8")
     request = urllib.request.Request(
         f"{url}/api/decide", data=payload,
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json", "X-Decision-Clicker": "1"})
     with urllib.request.urlopen(request, timeout=10) as antwort:
         daten = json.loads(antwort.read().decode("utf-8"))
     assert daten["ok"] is True
     assert daten["id"] == ziel["id"]
+
+
+def test_http_decide_verifiziert_die_indexierte_id(server, monkeypatch):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    original = writer.fill_decision
+    gesehen: dict[str, str] = {}
+
+    def pruefend(*args, **kwargs):
+        gesehen["expected_id"] = kwargs.get("expected_id")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(writer, "fill_decision", pruefend)
+    status, _ = sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A"})
+    assert status == 200
+    assert gesehen["expected_id"] == ziel["id"]
+
+
+def test_json_schreiben_ohne_api_guard_wird_abgewiesen(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, text = sende_json(
+        f"{url}/api/new", {"title": "Ohne Guard"}, include_guard=False)
+    assert status == 403
+    assert "X-Decision-Clicker" in text
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
+
+
+def test_cross_origin_post_wird_ohne_schreiben_abgewiesen(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, _ = sende(
+        f"{url}/api/new", {"title": "Fremde Website"},
+        {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+    )
+    assert status == 403
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
+
+
+def test_same_origin_formular_darf_schreiben(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, _ = sende(
+        f"{url}/api/new", {"title": "Gleicher Ursprung"},
+        {"Origin": url, "Sec-Fetch-Site": "same-origin"},
+    )
+    assert status == 200
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher + 1
+
+
+def test_falscher_host_wird_als_dns_rebinding_abgewiesen(server):
+    url, kette = server
+    vorher = chain.counts(chain.build_index(kette))["gesamt"]
+    status, _ = sende(
+        f"{url}/api/new", {"title": "Falscher Host"}, {"Host": "evil.example"})
+    assert status == 403
+    assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
+
+
+def test_server_verweigert_eine_nicht_lokale_bind_adresse(kette):
+    from dataclasses import replace
+
+    with pytest.raises(writer.WriteError, match="Loopback"):
+        serve(replace(kette, host="0.0.0.0", port=0))
+
+
+def test_parallele_http_anlage_vergibt_eindeutige_ids(server, monkeypatch):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    url, kette = server
+    original = chain.next_id
+
+    def verlangsamt(index):
+        result = original(index)
+        time.sleep(0.08)
+        return result
+
+    monkeypatch.setattr(chain, "next_id", verlangsamt)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda title: sende_json(f"{url}/api/new", {"title": title}),
+            ("Parallel eins", "Parallel zwei"),
+        ))
+    assert [status for status, _ in results] == [200, 200]
+    ids = [payload["id"] for _status, payload in results]
+    assert len(set(ids)) == 2
+    index = chain.build_index(kette)
+    assert all(chain.find(index, entry_id) is not None for entry_id in ids)
 
 
 def test_zweiter_klick_auf_dieselbe_id_prallt_ab(server):
@@ -306,7 +421,7 @@ def test_undo_setzt_die_entscheidung_ueber_http_zurueck(server):
     assert danach["status_class"] == chain.STATUS_OPEN
 
     _status, verlauf_seite = hole(f"{url}/verlauf")
-    assert "zurueckgesetzt" in verlauf_seite
+    assert "zurückgesetzt" in verlauf_seite
 
 
 def test_zweiter_undo_ueber_http_prallt_ab(server):

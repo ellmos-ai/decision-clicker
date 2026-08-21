@@ -1,0 +1,35 @@
+# Decision Clicker
+
+> Local-first Python library, CLI, and mini UI for file-based decision chains.
+
+## Canonical documentation
+
+- `README.md`: English usage and architecture guide.
+- `README.de.md`: synchronized German guide.
+- `SECURITY.md`: local-only deployment boundary and security invariants.
+- `PRIVACY.md`: data handling and fixture policy.
+- `CONTRIBUTING.md`: development and review rules.
+- `CHANGELOG.md`: version history.
+
+## Code map
+
+- `src/decision_clicker/api.py`: UI-independent integration facade.
+- `src/decision_clicker/chain.py`: adapter to the canonical external parser.
+- `src/decision_clicker/writer.py`: guarded byte-preserving writes and undo.
+- `src/decision_clicker/intake.py`: optional legacy inbox parser and takeover.
+- `src/decision_clicker/server.py`: localhost HTTP interface.
+- `src/decision_clicker/ui.py`: HTML rendering for the mini UI.
+- `tests/data/`: synthetic fixtures; never replace them with real records.
+
+## Non-negotiable invariants
+
+- Text files remain the source of truth; indexes are derived caches.
+- Use the chain's `_tools/decisions_index.py`; do not create a second
+  production parser.
+- Stop on foreign locks or stale source-line evidence.
+- Never overwrite an existing decision.
+- Back up before writes and preserve unrelated bytes and line endings.
+- Undo only tool-authored decisions and retain append-only evidence.
+- The mini server is local-only and unauthenticated; never expose it remotely.
+- The tool records user choices. It does not decide, predict, or verify
+  implementation.

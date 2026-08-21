@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Der zentrale Beweis: ausser dem gefuellten Feld aendert sich nichts.
 
-Diese Datei ist der Grund, warum das Werkzeug ueberhaupt in die Kette
-schreiben darf. Sie laeuft gegen KOPIEN echter TO-DECIDE-Dateien.
+Diese Datei ist der Grund, warum das Werkzeug überhaupt in die Kette
+schreiben darf. Sie läuft gegen Kopien synthetischer Vertrags-Fixtures.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_nur_das_entscheidungsfeld_aendert_sich(kette: Settings, original_bytes)
     # read_bytes()+decode() statt read_text(): Letzteres macht Universal-Newline-
     # Uebersetzung (CRLF -> LF), was in CRLF-Teilen der Kette (z. B. Teil 4)
     # JEDE Zeile als "geaendert" zeigen wuerde -- ein Artefakt der Lesart, keine
-    # echte Aenderung. `vorher` liest schon bytegenau, `nachher` muss es auch.
+    # echte Änderung. `vorher` liest schon bytegenau, `nachher` muss es auch.
     vorher = original_bytes[pfad.name].decode("utf-8-sig").splitlines(keepends=True)
     nachher = pfad.read_bytes().decode("utf-8-sig").splitlines(keepends=True)
 
@@ -64,8 +64,8 @@ def test_alle_anderen_dateien_bleiben_unberuehrt(kette: Settings, original_bytes
 
 def test_zeilenenden_und_bom_bleiben_erhalten(kette: Settings, original_bytes):
     """Neue Zeilen uebernehmen den lokalen Zeilenumbruch-Stil — der Rest der
-    Datei bleibt unangetastet, auch wenn sie (wie Teil 4 real) keine reine
-    CRLF-Datei mehr ist, sondern ueberwiegend CRLF mit ein paar alten
+    Datei bleibt unangetastet, auch wenn eine Fixture keine reine
+    CRLF-Datei mehr ist, sondern überwiegend CRLF mit einzelnen
     Einzel-LF-Zeilen. Die Behauptung ist NICHT "die ganze Datei ist einheitlich",
     sondern "fill_decision aendert an der bestehenden Mischung nichts, ausser
     zwei neuen, einheitlich endenden Zeilen"."""
@@ -159,7 +159,11 @@ def test_jede_aenderung_legt_eine_sicherung_an(kette: Settings):
 
 
 def test_fehlendes_feld_bricht_ab_statt_zu_raten(kette: Settings):
-    pfad = kette.chain_dir / "TO-DECIDE-USER.txt"
+    pfad = kette.chain_dir / "TO-DECIDE-USER_9.txt"
+    pfad.write_text(
+        "D-20990101-999 — Unvollständige Fixture\n\nSTATUS: OFFEN\n\n---\n",
+        encoding="utf-8",
+    )
     vorher = pfad.read_bytes()
     with pytest.raises(writer.WriteError, match="Kein Feld"):
         writer.fill_decision(kette, pfad, 1, "A", on="2026-08-07")

@@ -1,21 +1,58 @@
 # SPDX-License-Identifier: MIT
 """Pfade und Grundeinstellungen des Decision-Clickers.
 
-Alles ist ueber Umgebungsvariablen ueberschreibbar, damit die Tests gegen
-Kopien laufen koennen und niemals gegen die echte Kette.
+Alle Pfade sind über Umgebungsvariablen überschreibbar. Der neutrale
+Fallback leitet den OneDrive-Ordner aus der Laufzeitumgebung ab und enthält
+keinen Benutzer- oder Hostnamen.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_CHAIN = Path(r"C:\Users\User\OneDrive\.TOPICS\_control-center\_DECISIONS")
 DEFAULT_PORT = 8096
 DEFAULT_HOST = "127.0.0.1"
 
+
+def is_loopback_host(host: str) -> bool:
+    """Nur explizite Loopback-Adressen sind fuer den Mini-Server zulaessig."""
+    candidate = host.strip().lower()
+    if candidate == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
+def default_onedrive_root() -> Path:
+    """Best-effort-OneDrive-Wurzel ohne hostspezifischen Pfad.
+
+    Windows setzt üblicherweise eine der OneDrive-Variablen. Für lokale
+    Standardinstallationen und macOS existieren neutrale Fallbacks. Bei
+    abweichender Ablage bleibt ``DECISION_CLICKER_CHAIN`` der eindeutige Weg.
+    """
+    candidates: list[Path] = []
+    for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
+        if value := os.environ.get(name):
+            candidates.append(Path(value).expanduser())
+    home = Path.home()
+    candidates.extend([
+        home / "OneDrive",
+        home / "Library" / "CloudStorage" / "OneDrive-Personal",
+    ])
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
+
+
+DEFAULT_CHAIN = default_onedrive_root() / ".TOPICS" / "_control-center" / "_DECISIONS"
+
 # Neue Entscheidungen wandern immer in den letzten Kettenteil, solange er nicht
-# ueberlaeuft. Cut-and-Clue greift ab dieser Zeilenzahl (Regel im Kettenkopf).
+# überläuft. Cut-and-Clue greift ab dieser Zeilenzahl (Regel im Kettenkopf).
 CUT_AND_CLUE_LINES = 900
 
 
@@ -47,7 +84,7 @@ class Settings:
 
     @property
     def lock_file(self) -> Path:
-        return self.chain_dir / "LOCK.opus.decision-clicker.txt"
+        return self.chain_dir / "LOCK.decision-clicker.txt"
 
 
 def load() -> Settings:

@@ -1,0 +1,25 @@
+D-20260807-001 — First open sample
+
+STATUS: OFFEN
+FRAGE: Welche Variante soll verwendet werden?
+OPTIONEN:
+- A — Erste Variante
+- B — Zweite Variante
+
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+D-20260807-002 — Second open sample
+
+STATUS: OFFEN
+FRAGE: Soll die Änderung jetzt erfolgen?
+OPTIONEN:
+Option A: jetzt
+Option B: später
+
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+Pointer / Ende der synthetischen Fixture
