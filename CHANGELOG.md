@@ -22,6 +22,8 @@ All notable changes to this project are documented here. The format follows
   predecessor pointer, and quick index instead of inserting it before them.
 - Use a neutral Decision Clicker lock name and owner.
 - Replace host-dependent integration tests with deterministic portable tests.
+- Bind register tests to their synthetic inbox fixtures on clean CI hosts, and
+  let the private non-uploading CodeQL job read its own workflow metadata.
 - Enforce loopback-only serving, local Host/Origin checks, guarded JSON writes,
   parser-safe context rendering, and process-local write serialization.
 - Run CI on Linux, macOS, and Windows for Python 3.10 through 3.13; pin workflow
