@@ -127,6 +127,32 @@ def test_neuer_eintrag_steht_hinter_dem_letzten_bestand(kette: Settings):
     assert eintrag["source_line"] > letzte_zeile
 
 
+def test_erster_eintrag_in_frischem_kettenteil_bleibt_hinter_dem_kopf(
+    kette: Settings,
+):
+    """Ein Vorlaeufer-Pointer im Kopf ist kein Nachfolger-Pointer am Dateiende."""
+    ziel = kette.chain_dir / "TO-DECIDE-USER_9.txt"
+    ziel.write_text(
+        "# TO-DECIDE-USER — Teil 9\n\n"
+        "Pointer / Vorläufer:\n"
+        "Teil 8: TO-DECIDE-USER_8.txt\n"
+        "---\n\n"
+        "## Schnellindex — Teil 9 von 9\n\n"
+        "- D-20990101-001 — Erster Eintrag — OFFEN\n",
+        encoding="utf-8",
+    )
+
+    writer.append_entry(
+        kette,
+        ziel,
+        writer.render_entry("D-20990101-001", "Erster Eintrag"),
+    )
+
+    text = ziel.read_text(encoding="utf-8")
+    assert text.index("Pointer / Vorläufer:") < text.index("D-20990101-001 — Erster Eintrag\n\nSTATUS")
+    assert text.index("## Schnellindex") < text.index("D-20990101-001 — Erster Eintrag\n\nSTATUS")
+
+
 def test_neuer_eintrag_ist_sofort_klickbar(kette: Settings):
     neu_id = chain.next_id(chain.build_index(kette))
     ziel = chain.target_part(kette)
