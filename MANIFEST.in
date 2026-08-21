@@ -1,0 +1,12 @@
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include README.de.md
+include SECURITY.md
+include START.bat
+include PRIVACY.md
+include THIRD_PARTY.md
+include llms.txt
+recursive-include assets *.png *.svg
+recursive-include docs *.md
+recursive-include tests *.py *.txt *.md

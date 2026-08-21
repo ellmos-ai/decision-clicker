@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Desktop-Intake: Postfach einlesen und in die Kette übernehmen.
 
-`~/OneDrive/Desktop/TO-DECIDE-USER.txt` ist **keine zweite Kanonik**. Die
-Migration vom 2026-07-23 hat `_control-center/_DECISIONS` zur einen Ablage
-gemacht; die Desktop-Datei wird nur weiter von Automationen beschrieben, die
-das noch nicht mitbekommen haben (belegt: die Zenodo-Konvention in
-`.RESEARCH/CLAUDE.md` nennt wörtlich den Desktop-Pfad).
+Ein optionales Desktop-Postfach ist **keine zweite Kanonik**. Es dient nur als
+Kompatibilitätsweg für ältere Automationen, die noch nicht direkt in die
+Entscheidungskette schreiben.
 
 Der Clicker behandelt sie deshalb als **Postfach**: einlesen, konventionsgemäß
 in die Kette übernehmen, dort als übernommen markieren. Nichts wird gelöscht
@@ -13,19 +11,27 @@ und nichts umformatiert — Nachzügler-Automationen dürfen weiter hineinschrei
 
 Der eigene Scanner ist nötig, weil dort ein **Fremdformat** auftritt, das der
 Kettenparser nicht als Eintrag erkennt: ein Block, der mit `ID: D-…` beginnt
-statt mit der ID in Spalte 0. Genau so lag am 2026-08-07 eine offene
-Entscheidung (`D-20260806-001`) unsichtbar im Postfach.
+statt mit der ID in Spalte 0.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .config import Settings
+from .config import Settings, default_onedrive_root
 
-DEFAULT_SOURCES = (Path.home() / "OneDrive" / "Desktop" / "TO-DECIDE-USER.txt",)
+
+def _default_sources() -> tuple[Path, ...]:
+    """Konfigurierbare, hostsneutrale Postfachpfade."""
+    if configured := os.environ.get("DECISION_CLICKER_INBOX"):
+        return tuple(Path(value).expanduser() for value in configured.split(os.pathsep) if value)
+    return (default_onedrive_root() / "Desktop" / "TO-DECIDE-USER.txt",)
+
+
+DEFAULT_SOURCES = _default_sources()
 
 _ID = r"D-\d{8}-\d{2,4}(?:-[A-Za-z0-9]+)*"
 HEADING_RE = re.compile(rf"^(?:#{{1,4}}\s+)?(?P<id>{_ID})\s*(?:[—–]|--|-)?\s*(?P<title>.*?)\s*$")
@@ -139,6 +145,17 @@ def collect_options(block: list[str]) -> list[str]:
     return optionen
 
 
+def _flush_field(
+    current: str | None,
+    buffer: list[str],
+    fields: dict[str, str],
+) -> tuple[None, list[str]]:
+    """Mehrzeiliges Feld abschließen, ohne eine Schleifen-Closure zu halten."""
+    if current and current not in fields:
+        fields[current] = " ".join(" ".join(buffer).split())
+    return None, []
+
+
 def parse(path: Path) -> list[IntakeEntry]:
     lines, _ = _read(path)
     koepfe = [(i, _is_heading(line)) for i, line in enumerate(lines)]
@@ -153,35 +170,29 @@ def parse(path: Path) -> list[IntakeEntry]:
         laufend: str | None = None
         puffer: list[str] = []
 
-        def schliessen() -> None:
-            nonlocal laufend
-            if laufend and laufend not in felder:
-                felder[laufend] = " ".join(" ".join(puffer).split())
-            laufend, puffer[:] = None, []
-
         for line in block:
             body = line.rstrip("\r\n")
             nackt = body.strip()
             if not nackt or SEPARATOR_RE.match(nackt):
-                schliessen()
+                laufend, puffer = _flush_field(laufend, puffer, felder)
                 continue
             treffer = DECISION_RE.match(body)
             if treffer:
-                schliessen()
+                laufend, puffer = _flush_field(laufend, puffer, felder)
                 if not entscheidung:
                     entscheidung = treffer.group(1).strip()
                 continue
             treffer = FIELD_RE.match(body)
             if treffer:
-                schliessen()
+                laufend, puffer = _flush_field(laufend, puffer, felder)
                 laufend = " ".join(treffer.group("name").split()).upper()
                 puffer.append(treffer.group("wert").strip())
                 continue
             if laufend and not OPTION_START_RE.match(body):
                 puffer.append(nackt)  # Fortsetzungszeile eines mehrzeiligen Feldes
             elif laufend:
-                schliessen()
-        schliessen()
+                laufend, puffer = _flush_field(laufend, puffer, felder)
+        laufend, puffer = _flush_field(laufend, puffer, felder)
 
         kopf = HEADING_RE.match(block[0].rstrip("\r\n"))
         titel = (kopf.group("title").strip() if kopf and not ID_FIELD_RE.match(block[0].rstrip("\r\n")) else "")

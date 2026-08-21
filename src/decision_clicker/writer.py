@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import re
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 
-from .chain import ChainError, DONE_HEADING_RE, _load_index_tool
+from .chain import DONE_HEADING_RE, ChainError, _load_index_tool
 from .config import Settings
 
 DECISION_FIELD_RE = re.compile(r"^(\s*ENTSCHEIDUNG\s+DES\s+USERS\b[^:]*:)(.*)$", re.I)
@@ -29,10 +30,21 @@ SEPARATOR_RE = re.compile(r"^\s*-{3,}\s*$")
 
 TOOL_TAG = "decision-clicker"
 PLACEHOLDER = "[HIER EINTRAGEN]"
+MUTATION_LOCK = threading.RLock()
+
+ENTRY_ID_RE = re.compile(r"^D-\d{8}-\d{2,4}(?:-[A-Za-z0-9]+)*$")
+LINE_BREAK_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
 
 
 class WriteError(RuntimeError):
     """Der Schreibvorgang wurde abgebrochen — die Datei ist unveraendert."""
+
+
+def single_line(value: str, field: str) -> str:
+    """Ein skalares Kettenfeld validieren, bevor es Struktur werden kann."""
+    if LINE_BREAK_RE.search(value):
+        raise WriteError(f"{field} darf keinen Zeilenumbruch enthalten.")
+    return value.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +95,7 @@ def entry_bounds(settings: Settings, lines: list[str], start_line: int) -> tuple
     match_heading = _load_index_tool(settings.index_script).match_heading
     start = start_line - 1
     if start < 0 or start >= len(lines):
-        raise WriteError(f"Zeile {start_line} liegt ausserhalb der Datei")
+        raise WriteError(f"Zeile {start_line} liegt außerhalb der Datei")
     for index in range(start + 1, len(lines)):
         if match_heading(lines[index].rstrip("\r\n")):
             return start, index
@@ -130,9 +142,11 @@ def fill_decision(
 
     if expected_id:
         kopf = lines[start].rstrip("\r\n")
-        if expected_id not in kopf:
+        heading = _load_index_tool(settings.index_script).match_heading(kopf)
+        actual_id = heading[0] if heading else None
+        if actual_id != expected_id:
             raise WriteError(
-                f"{path.name}:{start_line} traegt nicht mehr {expected_id} "
+                f"{path.name}:{start_line} trägt nicht mehr {expected_id} "
                 f"(dort steht jetzt: {kopf[:70]!r}) — Ansicht ist veraltet, "
                 "bitte neu laden."
             )
@@ -207,9 +221,11 @@ def revert_decision(
 
     if expected_id:
         kopf = lines[start].rstrip("\r\n")
-        if expected_id not in kopf:
+        heading = _load_index_tool(settings.index_script).match_heading(kopf)
+        actual_id = heading[0] if heading else None
+        if actual_id != expected_id:
             raise WriteError(
-                f"{path.name}:{start_line} traegt nicht mehr {expected_id} "
+                f"{path.name}:{start_line} trägt nicht mehr {expected_id} "
                 f"(dort steht jetzt: {kopf[:70]!r}) — Ansicht ist veraltet, "
                 "bitte neu laden."
             )
@@ -345,7 +361,10 @@ OPTION_LINE_RE = re.compile(r"^\s*(?:[-•*]\s*)?(?i:Option\s+)?([A-Z])\s*[:—�
 
 def normalise_option(line: str) -> str:
     """Optionszeile in die Listenform der Kette bringen: `- A — Text`."""
-    match = OPTION_LINE_RE.match(line.strip())
+    line = single_line(line, "Eine Option")
+    if not line:
+        raise WriteError("Eine Option darf nicht leer sein.")
+    match = OPTION_LINE_RE.match(line)
     if not match:
         return f"- {line.strip()}"
     return f"- {match.group(1).upper()} — {match.group(2).strip()}"
@@ -364,14 +383,29 @@ def render_entry(
     scope: str = "",
     newline: str = "\r\n",
 ) -> str:
-    """Eintrag nach der Konvention des Kettenkopfes rendern."""
+    """Eintrag nach der Konvention des Kettenkopfes parserfest rendern.
+
+    Skalare Felder sind zwingend einzeilig. Freier Kontext bleibt mehrzeilig,
+    wird aber als Markdown-Zitat eingerueckt, damit eine Zeile wie
+    ``D-20990101-999 — ...`` niemals als zweiter Eintrag geparst wird.
+    """
+    entry_id = single_line(entry_id, "ID")
+    if not ENTRY_ID_RE.fullmatch(entry_id):
+        raise WriteError(f"Ungültige Entscheidungs-ID: {entry_id!r}")
+    title = single_line(title, "Titel")
+    status = single_line(status, "Status")
+    quelle = single_line(quelle, "Quelle")
+    frage = single_line(frage, "Frage")
+    empfehlung = single_line(empfehlung, "Empfehlung")
+    scope = single_line(scope, "Scope")
     rows: list[str] = [f"{entry_id} — {title}", "", f"STATUS: {status}"]
     if scope:
         rows.append(f"SCOPE: {scope}")
     if quelle:
         rows.append(f"QUELLE: {quelle}")
     if kontext:
-        rows += ["", "KONTEXT:", *kontext.strip().splitlines()]
+        context_lines = kontext.strip().splitlines() or [""]
+        rows += ["", "KONTEXT:", *[f"> {line}" if line else ">" for line in context_lines]]
     if frage:
         rows += ["", f"FRAGE: {frage}"]
     if optionen:
@@ -528,7 +562,7 @@ def write_lock(settings: Settings, purpose: str, hours: int = 24) -> Path:
     path.write_text(
         "\n".join([
             "LOCK — decision-clicker",
-            f"AGENT: OP-DECIDER (Claude Code, Opus 5)",
+            "AGENT: decision-clicker",
             f"ZWECK: {purpose}",
             f"ANGELEGT: {now.strftime('%Y-%m-%d %H:%M')}",
             f"VERFALL: {hours} h",
@@ -556,8 +590,8 @@ def foreign_locks(settings: Settings) -> list[Path]:
 
 
 __all__ = [
-    "ChainError", "WriteError", "append_done", "append_entry", "backup",
+    "ChainError", "MUTATION_LOCK", "WriteError", "append_done", "append_entry", "backup",
     "entry_bounds", "fill_decision", "foreign_locks", "mark_decision_undone",
     "release_lock", "render_decision", "render_entry", "revert_decision",
-    "undo_decision", "write_lock",
+    "single_line", "undo_decision", "write_lock",
 ]

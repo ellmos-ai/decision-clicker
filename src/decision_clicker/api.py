@@ -126,19 +126,20 @@ class DecisionClicker:
 
     def decide(self, key: str, choice: str, note: str = "") -> dict:
         """Entscheidungsfeld fuellen, Beleg schreiben, Index nachziehen."""
-        self._guard()
-        if not (choice or "").strip():
-            raise WriteError("Ohne Auswahl wird nichts eingetragen.")
-        index = chain.build_index(self.settings)
-        entry = chain.find(index, key)
-        if entry is None:
-            raise WriteError(f"{key} steht nicht in der Kette.")
-        ergebnis = writer.fill_decision(
-            self.settings, Path(entry["source_path"]), entry["source_line"],
-            choice, note, expected_id=entry["id"])
-        writer.append_done(self.settings, entry, choice, note)
-        self._refresh()
-        return {"ok": True, "id": entry["id"], "key": key, **ergebnis}
+        with writer.MUTATION_LOCK:
+            self._guard()
+            if not (choice or "").strip():
+                raise WriteError("Ohne Auswahl wird nichts eingetragen.")
+            index = chain.build_index(self.settings)
+            entry = chain.find(index, key)
+            if entry is None:
+                raise WriteError(f"{key} steht nicht in der Kette.")
+            ergebnis = writer.fill_decision(
+                self.settings, Path(entry["source_path"]), entry["source_line"],
+                choice, note, expected_id=entry["id"])
+            writer.append_done(self.settings, entry, choice, note)
+            self._refresh()
+            return {"ok": True, "id": entry["id"], "key": key, **ergebnis}
 
     # ------------------------------------------------------------------
     # Verlauf & Rueckgaengig
@@ -154,36 +155,38 @@ class DecisionClicker:
         der urspruengliche Beleg bleibt stehen und bekommt zusaetzlich einen
         ZURUECKGESETZT-Vermerk.
         """
-        self._guard()
-        index = chain.build_index(self.settings)
-        entry = chain.find(index, key)
-        if entry is None:
-            raise WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
-        if entry["status_class"] != chain.STATUS_PENDING:
-            raise WriteError(
-                f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
-                f"(aktuell: {entry['status_class']}) — nicht rückgängig machbar.")
-        ergebnis = writer.undo_decision(self.settings, entry, reason)
-        self._refresh()
-        return ergebnis
+        with writer.MUTATION_LOCK:
+            self._guard()
+            index = chain.build_index(self.settings)
+            entry = chain.find(index, key)
+            if entry is None:
+                raise WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
+            if entry["status_class"] != chain.STATUS_PENDING:
+                raise WriteError(
+                    f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
+                    f"(aktuell: {entry['status_class']}) — nicht rückgängig machbar.")
+            ergebnis = writer.undo_decision(self.settings, entry, reason)
+            self._refresh()
+            return ergebnis
 
     def create(self, title: str, *, frage: str = "", optionen: list[str] | None = None,
                empfehlung: str = "", kontext: str = "", quelle: str = "",
                scope: str = "") -> dict:
         """Neue Entscheidung konventionsgemaess in die KETTE einstellen."""
-        self._guard()
-        if not (title or "").strip():
-            raise WriteError("Ohne Titel wird nichts eingestellt.")
-        index = chain.build_index(self.settings)
-        entry_id = chain.next_id(index)
-        ziel = chain.target_part(self.settings)
-        rendered = writer.render_entry(
-            entry_id, title.strip(), quelle=quelle.strip(), frage=frage.strip(),
-            optionen=[o for o in (optionen or []) if o.strip()],
-            empfehlung=empfehlung.strip(), kontext=kontext, scope=scope.strip())
-        ergebnis = writer.append_entry(self.settings, ziel, rendered)
-        self._refresh()
-        return {"ok": True, "id": entry_id, "title": title.strip(), **ergebnis}
+        with writer.MUTATION_LOCK:
+            self._guard()
+            if not (title or "").strip():
+                raise WriteError("Ohne Titel wird nichts eingestellt.")
+            index = chain.build_index(self.settings)
+            entry_id = chain.next_id(index)
+            ziel = chain.target_part(self.settings)
+            rendered = writer.render_entry(
+                entry_id, title.strip(), quelle=quelle.strip(), frage=frage.strip(),
+                optionen=[o for o in (optionen or []) if o.strip()],
+                empfehlung=empfehlung.strip(), kontext=kontext, scope=scope.strip())
+            ergebnis = writer.append_entry(self.settings, ziel, rendered)
+            self._refresh()
+            return {"ok": True, "id": entry_id, "title": title.strip(), **ergebnis}
 
     # ------------------------------------------------------------------
     # Desktop-Postfach
@@ -195,8 +198,9 @@ class DecisionClicker:
             return []
 
     def intake_apply(self) -> list[dict]:
-        self._guard()
-        return intake.takeover(self.settings)
+        with writer.MUTATION_LOCK:
+            self._guard()
+            return intake.takeover(self.settings)
 
     def intake_sources(self) -> list[str]:
         return [str(p) for p in intake.sources(self.settings)]

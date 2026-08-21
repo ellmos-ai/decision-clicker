@@ -14,13 +14,18 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import chain, intake, ui, writer
 from .api import options_of
-from .config import Settings, load
+from .config import Settings, is_loopback_host, load
 
 MAX_BODY = 256 * 1024
+JSON_WRITE_HEADER = "X-Decision-Clicker"
+
+
+class RequestRejected(writer.WriteError):
+    """Browser- oder Host-Prüfung hat den Schreibrequest abgewiesen."""
 
 
 def entry_text(settings: Settings, entry: dict) -> str:
-    """Rohtext eines Eintrags — der Kontext, den Lukas beim Klicken sieht."""
+    """Rohtext eines Eintrags — der Kontext, den die nutzende Person sieht."""
     path = Path(entry["source_path"])
     if not path.is_file():
         return entry.get("question", "")
@@ -46,8 +51,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(payload)
+
+    def _security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        )
 
     def _json(self, data: dict, status: int = 200) -> None:
         raw = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -57,7 +73,41 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(303)
         self.send_header("Location", target)
         self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
+
+    def _local_authorities(self) -> set[str]:
+        """Erlaubte Host-/Origin-Autoritäten des tatsächlichen Servers."""
+        bound_host, bound_port = self.server.server_address[:2]
+        hosts = {str(bound_host), self.settings.host, "127.0.0.1", "localhost"}
+        return {
+            f"{host.lower()}:{bound_port}"
+            for host in hosts
+            if host and is_loopback_host(host)
+        }
+
+    def _verify_write_request(self) -> None:
+        """Cross-Site-POSTs, DNS-Rebinding und einfache JSON-CSRF blockieren."""
+        authorities = self._local_authorities()
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in authorities:
+            raise RequestRejected("Ungültiger Host für den lokalen Schreibzugriff.")
+
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if origin and origin not in {f"http://{authority}" for authority in authorities}:
+            raise RequestRejected("Cross-Origin-Schreibzugriff wurde abgewiesen.")
+
+        fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if fetch_site and fetch_site not in {"same-origin", "none"}:
+            raise RequestRejected("Cross-Site-Schreibzugriff wurde abgewiesen.")
+
+        content_type = (self.headers.get("Content-Type") or "").lower()
+        if "application/json" in content_type:
+            if self.headers.get(JSON_WRITE_HEADER) != "1":
+                raise RequestRejected(
+                    f"JSON-Schreibzugriffe brauchen den Header {JSON_WRITE_HEADER}: 1."
+                )
 
     def _form(self) -> dict[str, str]:
         """Formular ODER JSON — derselbe Einstellweg für Mensch und Automation."""
@@ -69,7 +119,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wants_json = True
             daten = json.loads(raw or "{}")
             if isinstance(daten.get("optionen"), list):
-                daten["optionen"] = "\n".join(str(o) for o in daten["optionen"])
+                daten["optionen"] = "\n".join(
+                    writer.single_line(str(option), "Eine Option")
+                    for option in daten["optionen"]
+                )
             return {k: ("" if v is None else str(v)) for k, v in daten.items()}
         self.wants_json = False
         return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
@@ -185,18 +238,22 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST --------------------------------------------------------------
     def do_POST(self) -> None:  # noqa: N802
         try:
+            self._verify_write_request()
             form = self._form()
             pfad = urlparse(self.path).path
-            if pfad == "/api/decide":
-                self._decide(form)
-            elif pfad == "/api/new":
-                self._new(form)
-            elif pfad == "/api/intake":
-                self._intake()
-            elif pfad.startswith("/api/undo/"):
-                self._undo(unquote(pfad[len("/api/undo/"):]))
-            else:
-                self._send(ui.meldung("Nicht gefunden", self.path, "/", "Übersicht"), 404)
+            with writer.MUTATION_LOCK:
+                if pfad == "/api/decide":
+                    self._decide(form)
+                elif pfad == "/api/new":
+                    self._new(form)
+                elif pfad == "/api/intake":
+                    self._intake()
+                elif pfad.startswith("/api/undo/"):
+                    self._undo(unquote(pfad[len("/api/undo/"):]))
+                else:
+                    self._send(ui.meldung("Nicht gefunden", self.path, "/", "Übersicht"), 404)
+        except RequestRejected as exc:
+            self._send(ui.meldung("Zugriff abgewiesen", str(exc), "/", "Übersicht"), 403)
         except (writer.WriteError, chain.ChainError) as exc:
             self._send(ui.meldung("Nicht geschrieben", str(exc), "/klick", "Weiter"), 409)
         except Exception:  # noqa: BLE001
@@ -215,7 +272,8 @@ class Handler(BaseHTTPRequestHandler):
             raise writer.WriteError(f"{key} steht nicht in der Kette.")
         note = form.get("note", "").strip()
         ergebnis = writer.fill_decision(
-            self.settings, Path(entry["source_path"]), entry["source_line"], choice, note)
+            self.settings, Path(entry["source_path"]), entry["source_line"], choice, note,
+            expected_id=entry["id"])
         writer.append_done(self.settings, entry, choice, note)
         self.skipped.discard(key)
         try:
@@ -256,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
             chain.refresh_artifacts(self.settings)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
-        print(f"  ZURUECKGESETZT {key}")
+        print(f"  ZURÜCKGESETZT {key}")
         self._antwort(f"/klick?key={key}", {"ok": True, "id": key, **ergebnis})
 
     def _new(self, form: dict[str, str]) -> None:
@@ -293,12 +351,17 @@ class Handler(BaseHTTPRequestHandler):
             raise writer.WriteError(blocker)
         ergebnis = intake.takeover(self.settings)
         for eintrag in ergebnis:
-            print(f"  UEBERNOMMEN {eintrag['id']} -> {eintrag['ziel']}")
+            print(f"  ÜBERNOMMEN {eintrag['id']} -> {eintrag['ziel']}")
         self._antwort("/", {"ok": True, "uebernommen": ergebnis})
 
 
 def serve(settings: Settings | None = None) -> None:
     settings = settings or load()
+    if not is_loopback_host(settings.host):
+        raise writer.WriteError(
+            "Der Mini-Server darf nur an eine Loopback-Adresse gebunden werden "
+            "(127.0.0.1 oder localhost)."
+        )
     Handler.settings = settings
     Handler.skipped = set()
     httpd = ThreadingHTTPServer((settings.host, settings.port), Handler)

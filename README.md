@@ -1,330 +1,184 @@
-<img src="assets/banner.png" width="100%" alt="decision-clicker Banner">
+<img src="assets/banner.png" width="100%" alt="Decision Clicker banner">
 
-# Decision-Clicker
+# Decision Clicker
 
-Kernlogik **und** Mini-Oberfläche für die zentrale Entscheidungskette
-`~/OneDrive/.TOPICS/_control-center/_DECISIONS`.
+[Deutsch](README.de.md) · English
 
-Agenten und Sessions **stellen Entscheidungen ein**, Lukas **klickt sich durch**,
-jede Entscheidung wird **dokumentiert** und bleibt **langfristig auffindbar**.
+Decision Clicker is a local-first Python library, CLI, and small web UI for
+file-based decision chains. It lets people review, record, undo, and audit
+decisions without moving the source of truth into a database.
 
----
+The decision-chain text files remain canonical. Generated JSON and Markdown
+indexes are rebuildable caches.
 
-## Zwei Oberflächen, ein Kern
+## Safety model
 
-Die Kernlogik (Ketten-Parser, konservativer Writer, Index, Postfach-Scan,
-ID-Vergabe) ist **GUI-unabhängig** und liegt hinter der Fassade
-`decision_clicker.api.DecisionClicker`. Darauf sitzen zwei Oberflächen:
+- The web server enforces a loopback bind (`127.0.0.1` or `localhost`) and has
+  no remote-access authentication.
+- Mutating HTTP requests validate the local Host and browser Origin. JSON
+  writes additionally require `X-Decision-Clicker: 1`.
+- One running process serializes its write transactions. Do not run multiple
+  Decision Clicker processes against the same chain.
+- Every write checks for foreign `LOCK*.txt` files and stops when one exists.
+- Before changing a chain file, the writer creates a byte-for-byte backup.
+- A decision field is changed only when it is still a placeholder.
+- Undo is accepted only for decisions provably written by Decision Clicker.
+- Decision evidence is append-only; undo adds a reset record instead of
+  deleting the original record.
+- Scalar entry fields reject line breaks; free-form context is rendered in a
+  parser-safe quoted block.
+- Tests use synthetic fixtures and never access personal decision data.
 
-| Oberfläche | Rolle | Start |
-|---|---|---|
-| **Panel P10 der ellmos Unified GUI** | **die reguläre Oberfläche** — Entscheidungen stehen dort neben Locks, Tickets, Tasks und Skills | `python -m unified_gui` im Modul `.RUNTIME/ellmos-unified-gui` |
-| **Mini-UI dieses Pakets** (Port 8096) | **Rückfall** — läuft ohne FastAPI und ohne die Unified GUI, falls die nicht verfügbar ist | `START.bat` |
+## Requirements
 
-Beide schreiben durch dieselbe Fassade in dieselbe Kette; es gibt keinen zweiten
-Schreibpfad und keinen zweiten Parser. Die Unified GUI bindet die Lib über ihren
-`DecisionsAdapter` ein und meldet dann die Capability `DECISIONS_RW`; fehlt
-dieses Paket, degradiert P10 auf seine frühere read-only-Sicht (dort [D11]).
+- Python 3.10 through 3.13.
+- A decision-chain directory containing:
+  - one or more `TO-DECIDE-USER*.txt` files;
+  - `DECIDED-AND-DONE.md`;
+  - `_tools/decisions_index.py`, implementing the `decisions.index/1`
+    parser contract.
 
----
+The index parser is intentionally external. Decision Clicker loads that one
+parser instead of maintaining a second, subtly different parser.
 
-## Starten (Mini-UI / Rückfall)
+## Install
 
-Doppelklick auf **`START.bat`** — der Browser öffnet sich von selbst auf
-<http://127.0.0.1:8096>. Beenden mit `Strg+C` im schwarzen Fenster.
-
-Der Server bindet ausschließlich an `127.0.0.1`; von außen ist nichts erreichbar.
-Läuft schon eine Instanz, öffnet `START.bat` nur den Browser und startet keine zweite.
-
-Ohne Batch-Datei:
-
+```bash
+python -m venv .venv
+python -m pip install -e ".[dev]"
 ```
-set PYTHONIOENCODING=utf-8
-set PYTHONPATH=src
-python -m decision_clicker            # Server auf 8096
-python -m decision_clicker --check    # nur nachsehen, nichts starten
+
+For runtime-only use, install without the `dev` extra:
+
+```bash
+python -m pip install .
 ```
 
-## Die fünf Ansichten
+## Configure
 
-| Seite | Was sie tut |
-|---|---|
-| **Übersicht** (`/`) | Zähler je Statusklasse, Liste aller offenen Entscheidungen |
-| **Durchklicken** (`/klick`) | Eine Entscheidung pro Ansicht: Titel, Kontext, Optionen als Knöpfe, Empfehlung hervorgehoben, Freitext-Anmerkung, „Später entscheiden" |
-| **Verlauf** (`/verlauf`) | Chronologische Liste aller über den Clicker getroffenen Entscheidungen (nicht das ganze Register) — je Eintrag Wahl, Zeitpunkt, Status (aktiv/zurückgesetzt) und ein direkter „Rückgängig"-Knopf |
-| **Einstellen** (`/neu`) | Formular für eine neue Entscheidung; die ID wird kollisionssicher vergeben |
-| **Register** (`/register`) | Durchsuchbare Liste aller getroffenen Entscheidungen aus Kette, DECIDED-AND-DONE, Archiv und Desktop-Postfach — je ID **eine** Zeile mit allen Fundstellen |
+`DECISION_CLICKER_CHAIN` is the recommended explicit configuration:
 
-Dazu `/api/health` (Kurzstatus als JSON), `/api/index` (vollständiger Index),
-`/api/history` (Verlauf als JSON), `/api/intake` (Postfach-Stand bzw. Übernahme
-per POST) und `POST /api/undo/<id>` (einen Klick rückgängig machen).
-
-### Klick-Bestätigung + Rückgängig [2026-08-07]
-
-Ein POST auf `/api/decide` führt **nicht mehr** kommentarlos zur nächsten
-Entscheidung. Im Browser erscheint eine deutliche Bestätigungsseite
-(„✅ Entschieden: D-… — Option A") mit einem direkten **Rückgängig**-Knopf und
-einem bewussten Klick auf „Weiter zur nächsten Entscheidung". JSON-Aufrufer
-(Automationen) bekommen weiterhin sofort die Rohdaten, keine HTML-Seite.
-
-Anlass: Am 07.08. wurden beim ersten Durchklicken drei Entscheidungen
-unbemerkt live geschrieben, weil die alte stille Weiterleitung sofort zur
-nächsten Ansicht sprang. `POST /api/undo/<id>` (bzw. der Rückgängig-Knopf auf
-der Bestätigungs- oder Verlaufsseite) setzt das Entscheidungsfeld exakt auf
-den Zustand vor dem Klick zurück — nur für Entscheidungen, die **nachweislich
-dieses Werkzeug** getroffen hat (erkennbar an der `(decision-clicker)`-Markierung
-in der `ENTSCHIEDEN AM`-Zeile); von Hand oder extern entschiedene Einträge lässt
-es unangetastet (HTTP 409). Der ursprüngliche Beleg in `DECIDED-AND-DONE.md`
-wird dabei **nie gelöscht**, nur um eine `ZURÜCKGESETZT AM: …`-Zeile ergänzt —
-append-only, wie überall sonst in diesem Werkzeug.
-
----
-
-## Architektur: was führt, was ist Cache
-
-**Die TXT-Kette ist die Quelle der Wahrheit.** Menschen- und agentenlesbar; jeder
-Agent kann weiterhin per Datei nach Konvention einstellen, ohne dieses Werkzeug
-zu kennen. Nichts Bestehendes bricht.
-
-`decisions.index.json` und `INDEX-REPORT.md` sind **Index und Cache** — jederzeit
-aus den Dateien neu erzeugbar und **nie führend**. Der Clicker hält keine eigene
-Datenbank; er liest bei jedem Aufruf frisch und schreibt den Index nur nach.
-
-## Einstellprozess — drei Wege, ein Ziel
-
-Alle drei erzeugen konventionsgemäßes TXT **in der Kette** (nie auf dem Desktop)
-und vergeben die ID kollisionssicher.
-
-1. **UI-Formular** — Seite „Einstellen" (`/neu`).
-2. **Lokale API** — `POST http://127.0.0.1:8096/api/new` mit
-   `Content-Type: application/json`; Antwort enthält die vergebene ID:
-   ```json
-   {"title": "…", "frage": "…", "optionen": ["A — …", "B — …"],
-    "empfehlung": "A — …", "kontext": "…", "quelle": "…", "scope": "global"}
-   ```
-   Ebenso `POST /api/decide` (`{"key": "D-…", "choice": "B", "note": "…"}`).
-3. **CLI** —
-   ```
-   python -m decision_clicker add "Titel" --frage "…" \
-       --option "A — …" --option "B — …" --empfehlung "A — …" --json
-   ```
-   `--dry-run` zeigt den Eintrag, ohne zu schreiben.
-
----
-
-## Desktop-Postfach (Intake)
-
-`~/OneDrive/Desktop/TO-DECIDE-USER.txt` ist **keine zweite Kanonik**. Die
-Migration vom 23.07. hat `_control-center/_DECISIONS` zur einen Ablage gemacht;
-die Desktop-Datei wird nur weiter von Automationen beschrieben, die das noch
-nicht mitbekommen haben. Die Verknüpfung `Desktop\_DECISIONS.lnk` zeigt bereits
-auf die Kette (verifiziert am 07.08.).
-
-Der Clicker behandelt die Datei deshalb als **Postfach**:
-
-- Bei jedem Serverstart und auf der Übersicht wird sie **gelesen** (ein GET
-  schreibt nie); neue Einträge erscheinen als Banner mit Knopf.
-- Beim Übernehmen wandern **offene** Einträge in die Kette, **bereits
-  entschiedene** als Beleg nach `DECIDED-AND-DONE.md` — die ursprüngliche D-ID
-  bleibt in beiden Fällen erhalten.
-- Im Postfach wird der Eintrag mit
-  `→ ÜBERNOMMEN nach _control-center/_DECISIONS (Datum)` markiert. **Rein
-  additiv:** nichts wird gelöscht oder umformatiert, damit Nachzügler-Automationen
-  weiter hineinschreiben dürfen.
-- Ein zweiter Lauf übernimmt nichts doppelt.
-
-Manuell: `python -m decision_clicker intake [--dry-run]`.
-
-**Warum ein eigener Scanner statt `decisions_index.py`:** Im Postfach liegt ein
-Fremdformat, das der Kettenparser nicht als Eintrag erkennt — ein Block, der mit
-`ID: D-…` beginnt statt mit der ID in Spalte 0. Genau so lag am 07.08. eine
-**offene** Entscheidung (`D-20260806-001`, abc/L4-Uniformitätstyp) unsichtbar im
-Postfach. `tests/test_intake.py` hält diese Begründung als Test fest.
-
-Der Originalwortlaut wird bei der Übernahme vollständig mitgenommen und mit
-`| ` zitiert. Das ist nicht Kosmetik: ohne den Präfix träfe der Writer auf die
-zitierte Zeile `ENTSCHEIDUNG DES USERS:` und würde diese füllen statt der echten.
-
----
-
-## Was beim Klick genau passiert
-
-1. **Sperrprüfung.** Liegt eine fremde `LOCK*.txt` im Entscheidungsordner, wird
-   nicht geschrieben — der Klick wird mit Begründung abgewiesen.
-2. **Sicherung.** Die Zieldatei wird vorher nach `_decision-archive/_bak/` kopiert.
-3. **Ein Feld, eine Datumszeile.** In der TO-DECIDE-Datei wird ausschließlich die
-   Zeile `ENTSCHEIDUNG DES USERS:` gefüllt und dahinter eine Leerzeile plus
-   `ENTSCHIEDEN AM: …` ergänzt. Sonst ändert sich **nichts** — keine Formatierung,
-   keine Zeilenenden, kein Encoding, keine fremden Zeilen.
-4. **Beleg.** Ein Eintrag wird an `DECIDED-AND-DONE.md` angehängt.
-5. **Index.** `decisions.index.json` und `INDEX-REPORT.md` werden neu erzeugt.
-
-Ein bereits entschiedener Eintrag wird **nie** überschrieben (HTTP 409).
-
-**Die Optionsknöpfe kommen aus dem Volltext, nicht aus dem Index.** Der Index
-kürzt `options_excerpt` auf 400 Zeichen; bei ausführlichen Einträgen fiel dadurch
-die letzte Option unter den Tisch und war schlicht nicht anklickbar (aufgefallen
-an `D-20260806-001`, wo Option C fehlte). Genommen wird die längere der beiden
-Lesarten — `tests/test_server.py` hält das als Regression fest.
-
-**Warum die Leerzeile vor dem Datum:** Der Kettenparser sammelt Feldwerte
-mehrzeilig bis zur nächsten Leerzeile. Ohne sie würde das Datum in den
-Entscheidungswert gezogen und im Index-Report als Teil der Entscheidung
-erscheinen. Mit ihr bleibt beides sauber getrennt.
-
-**Der Eintrag bleibt in der aktiven Kette stehen.** Nach der Kettenregel wandert
-er erst nach *verifizierter Umsetzung* nach `DECIDED-AND-DONE.md` — und das
-verifiziert kein Klick. Der Clicker erzeugt nur den Beleg, dass die Entscheidung
-gefallen ist.
-
----
-
-## Warum der Kern hier liegt und die Oberfläche dort
-
-Ursprünglich war dies ein eigenständiges Werkzeug, weil das P10-Panel der
-Unified GUI sich im eigenen Docstring darauf festlegte, **nie zu schreiben**.
-Auf Weichenstellung des Nutzers (07.08.) ist die reguläre Oberfläche jetzt das
-Panel — der Kern blieb hier:
-
-- **Die Logik ist GUI-unabhängig nutzbar.** CLI und lokale API funktionieren
-  ohne FastAPI, ohne Browser und ohne die Unified GUI. Ein Agent, der eine
-  Entscheidung einstellen will, braucht keine Oberfläche.
-- **Kein Doppelbau.** Die Unified GUI konsumiert diese Lib, statt Parser,
-  Writer und Postfach-Logik ein zweites Mal zu schreiben.
-- **Plan D.** Neue Arbeit gehört in einen lokalen Klon; die Unified GUI liegt
-  aus historischen Gründen in OneDrive mit eigenem `.git`.
-
-Den Kettenparser baut dieses Paket ausdrücklich **nicht** nach — es lädt
-`_DECISIONS/_tools/decisions_index.py` als Modul. Ein zweiter, leicht
-abweichender Parser wäre der schlimmere Fehler. Damit gibt es über beide
-Oberflächen hinweg genau einen Parser und genau einen Schreibpfad.
-
----
-
-## ID-Vergabe
-
-`D-JJJJMMTT-NNN`, fortlaufend je Tag. Vor jeder Vergabe werden **alle** bekannten
-IDs geprüft — aktive Kette, `DECIDED-AND-DONE.md` **und** Archiv. Eine archivierte
-ID gilt als vergeben; genau daraus sind die fünf bekannten Kollisionen
-`D-20260731-009` bis `-013` entstanden. Bestehende Kollisionen werden **gemeldet,
-nicht umnummeriert** — IDs können in Tickets und Commits referenziert sein.
-
-Neue Einträge gehen ans Ende des letzten Kettenteils. Ist der zu lang geworden,
-weist der Clicker auf die Cut-and-Clue-Regel hin, **teilt aber nicht selbst** —
-ein struktureller Eingriff in die Kette gehört zu einem Menschen.
-
----
-
-## Tests
-
+```powershell
+$env:DECISION_CLICKER_CHAIN = "D:\data\_DECISIONS"
+decision-clicker --check
 ```
+
+```bash
+export DECISION_CLICKER_CHAIN="$HOME/data/_DECISIONS"
+decision-clicker --check
+```
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DECISION_CLICKER_CHAIN` | Canonical decision-chain directory | Derived from the local OneDrive root |
+| `DECISION_CLICKER_INBOX` | Optional legacy inbox path; multiple paths use the OS path separator | `<OneDrive>/Desktop/TO-DECIDE-USER.txt` |
+| `DECISION_CLICKER_HOST` | Mini-UI bind host; loopback only | `127.0.0.1` |
+| `DECISION_CLICKER_PORT` | Mini-UI port | `8096` |
+
+Windows OneDrive environment variables are detected. The neutral fallbacks are
+`~/OneDrive` and `~/Library/CloudStorage/OneDrive-Personal`. For other macOS
+OneDrive layouts, set `DECISION_CLICKER_CHAIN` explicitly.
+
+## Use
+
+Check the chain without starting a server:
+
+```bash
+decision-clicker --check
+```
+
+Start the local mini UI:
+
+```bash
+decision-clicker --open
+```
+
+On Windows, `START.bat` performs the same local startup and avoids launching a
+second instance on port 8096.
+
+Create a decision:
+
+```bash
+decision-clicker add "Choose a rollout" \
+  --frage "Which rollout should be used?" \
+  --option "A — staged" \
+  --option "B — immediate" \
+  --empfehlung "A — easier to reverse" \
+  --dry-run
+```
+
+Remove `--dry-run` after reviewing the rendered entry.
+
+## Interfaces
+
+| Interface | Role |
+| --- | --- |
+| `decision_clicker.api.DecisionClicker` | UI-independent facade for integrations |
+| `decision-clicker` | CLI for checks, creation, inbox intake, and the local server |
+| Mini UI on port 8096 | Lightweight fallback UI using only the Python standard library |
+| Unified GUI adapter | Optional regular UI; consumes the same facade and writer |
+
+The mini UI includes an overview, one-at-a-time review, history and undo,
+creation, and a deduplicated register. JSON endpoints expose health, index,
+history, creation, decisions, undo, and inbox intake to local automation.
+Mutating JSON calls must send the explicit local-API guard header:
+
+```bash
+curl -H "Content-Type: application/json" \
+  -H "X-Decision-Clicker: 1" \
+  --data '{"title":"Choose a rollout"}' \
+  http://127.0.0.1:8096/api/new
+```
+
+## Write semantics
+
+For a decision click, the writer:
+
+1. rejects foreign locks;
+2. verifies that the indexed line still belongs to the expected decision ID;
+3. creates a backup under `_decision-archive/_bak/`;
+4. fills only `ENTSCHEIDUNG DES USERS:` and adds a dated tool marker;
+5. appends evidence to `DECIDED-AND-DONE.md`;
+6. rebuilds the derived index artifacts.
+
+It never marks implementation as verified. A decision remains in the active
+chain until the surrounding governance process verifies implementation.
+
+## Legacy inbox intake
+
+The optional inbox is a compatibility path, not a second source of truth.
+Decision Clicker recognizes both regular headings and the legacy `ID: D-…`
+form. Intake preserves IDs and original wording, adds a takeover marker to the
+inbox, and is idempotent.
+
+## Development
+
+```bash
+python -m ruff check .
 python -m pytest -q
+python -m build
 ```
 
-93 Tests, davon der Kern in `tests/test_writer_roundtrip.py`: Er füllt
-Entscheidungsfelder in **Kopien echter TO-DECIDE-Dateien** und weist per Diff
-nach, dass genau eine Zeile ersetzt und genau zwei ergänzt wurden — alles andere
-bleibt Byte für Byte gleich, inklusive CRLF in Teil 4 und LF in den Teilen 1–3.
-`tests/test_undo.py` spiegelt das für die Gegenrichtung: ein Roundtrip
-decide → undo lässt die Kettendatei byte-identisch zum Zustand vor dem Klick
-zurück.
+The test suite covers parsing, configuration, lock behavior, byte-preserving
+writes, backups, ID allocation, structural-injection protection, all creation
+paths, HTTP origin/host checks, concurrent requests, intake, history, and
+byte-identical decision/undo round trips. CI runs it on Linux, macOS, and
+Windows with every supported Python version.
 
-`tests/test_server.py` fährt einen echten Server auf einem freien Port hoch (nie
-8096) und geht den vollständigen Weg über HTTP.
+## Boundaries
 
-**Kein Test fasst die echte Kette an.** Für den Beleg am Echtsystem gibt es
-`tools/selftest_http.py`: legt eine Dummy-Entscheidung an, klickt sie durch,
-prüft Datei, Sicherung und Beleg — und baut den Dummy anschließend Byte-genau
-zurück; das Protokoll landet in `_decision-archive/`.
+- Decision Clicker records user choices; it does not choose on the user's
+  behalf and does not predict answers.
+- It does not verify implementation or move entries into a completed state.
+- It does not own the decision-chain parser or the optional Unified GUI.
+- It has no telemetry and no runtime dependency outside the Python standard
+  library.
 
----
+See [SECURITY.md](SECURITY.md), [PRIVACY.md](PRIVACY.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md) before deploying or contributing.
 
-## Werkzeuge
+## License
 
-| Datei | Zweck |
-|---|---|
-| `tools/seed_alltagsorganisation.py` | Stellt die Alltagsorganisations-Entscheidungen (E01–E07 plus Briefing vom 07.08.) ein. Idempotent, `--dry-run` zeigt nur. Beantwortet nichts. |
-| `tools/selftest_http.py` | Selbsttest am Echtsystem, siehe oben. |
-
----
-
-## Folgearbeiten (nicht Teil dieses Werkzeugs)
-
-**Undo im Panel P10 der Unified GUI — offen, gehört dem P10-Panel.** Die
-Fassade (`DecisionClicker.history()` / `.undo()`) und die HTTP-Route
-(`POST /api/undo/<id>`) sind fertig und getestet; das Panel P10 selbst bindet
-sie noch nicht ein (dort bislang nur `decide()`/`create()` verdrahtet). Bis
-dahin ist Rückgängig-Machen nur über die Mini-UI dieses Pakets (`/verlauf`,
-`/klick`-Bestätigungsseite) oder direkt über die Fassade erreichbar.
-
-**Automationen-Sweep — offen, gehört dem Operator.** Solange Automationen auf den
-Desktop-Pfad schreiben, füllt sich das Postfach immer wieder. Der Clicker fängt
-das auf, behebt es aber nicht. Umzustellen auf die Kette bzw. den neuen API-/CLI-Weg:
-
-- `.RESEARCH/CLAUDE.md` — die Zenodo-Konvention nennt wörtlich den Desktop-Pfad
-  für neue Upload-Anfragen (belegt).
-- Vermutlich weitere Automations-Prompts von Gemini/Antigravity und Codex —
-  ungeprüft, muss der Sweep feststellen.
-
-Prüfbar mit `python -m decision_clicker --check`: Zeigt die Zeile
-„Desktop-Postfach: N noch nicht übernommen" dauerhaft Zugänge, ist der Sweep
-noch nicht durch.
-
----
-
-## OneDrive-Anbindung (Plan D)
-
-Entwickelt, getestet und committet wird **hier** in `C:\_Local_DEV\repos\decision-clicker`.
-In OneDrive liegt **kein `.git`** und keine zweite Arbeitskopie.
-
-Damit Lukas das Werkzeug findet, gehört unter
-`~/OneDrive/.TOPICS/_control-center/_decision-clicker/` ein reiner Zeiger
-(`MANIFEST.md` mit Pfad und Startanleitung) — kein Spiegel des Codes. Der
-Clicker liest die Kette ohnehin direkt aus OneDrive; eine gespiegelte Kopie
-brächte nur einen zweiten, veraltenden Stand.
-
-Nach Plan-D-Modulklassen ist das **Klasse B** (Agentenwerkzeug): Manifest und
-Zeiger in OneDrive, Code lokal.
-
----
-
-## Phase 2: Aufgaben-Manager (Konzept, noch nicht gebaut)
-
-Die gleiche Oberfläche bekommt Reiter neben „Entscheidungen". Grundsatz für
-alle: **schreibend nur dort, wo der Clicker Kanon ist — überall sonst lesend.**
-
-### Reiter „Aufgaben"
-Lukas' eigene Aufgaben. Kanonquelle ist noch zu klären: Rinnsal
-(`~/.rinnsal/scanner_tasks.db`, außerhalb OneDrive) führt heute die
-Hintergrund-Scanner-Aufgaben, TASKPLAN die Vorhaben mit Aufwand. Beides ist
-Agenten-Werkzeug, nicht Lukas' persönliche Liste — die Wahl gehört als eigene
-Entscheidung in die Kette, bevor gebaut wird.
-
-### Reiter „Routinen" (read-only)
-Sicht auf die Routinika-Datenbank, `.../SOFTWARE/CASH/RDY_Routinika_SOCIAL/`
-(`database.py` als Einstieg; der konkrete DB-Pfad ist vor dem Bau zu ermitteln,
-nicht zu raten). **Nur lesen:** Routinika ist laut E03-Empfehlung Kanon für
-Routinen; ein zweiter Schreibweg wäre exakt die Doppelpflege, die abgeschafft
-werden soll. Zweck hier: Fälligkeiten neben den Entscheidungen sichtbar machen.
-
-### Reiter „BACH" (read-only, **frühestens ab 13.08.**)
-BACH ist bis ~12.08. judging-gesperrt. Bis dahin enthält dieses Projekt
-**keinerlei BACH-Zugriff** — kein Import, kein Pfad, keine Konfiguration.
-Danach, und nur lesend: Termine (`calendar`), Kontakte (`contact`), Abos
-(`abo`), Versicherungsfristen (`versicherung fristen`). Zugriff über die
-BACH-Library `bach_api`, nie direkt auf `bach.db`.
-
-### Was Phase 2 ausdrücklich nicht wird
-Kein weiteres Dashboard. UpToday ist das Cockpit, BACH der Erinnerungskanal —
-beide Rollen sind besetzt (siehe E05: FullAssistantHub einfrieren, weil seine
-Rolle doppelt besetzt war). Der Clicker bleibt das Werkzeug für **Entscheidungen
-und deren Nachbarschaft**.
-
----
-
-## Grenzen
-
-- Kein GitHub-Remote. Repo-Anlage und Push entscheidet der Nutzer.
-- Fasst BACH nicht an (Judging-Hold).
-- Beantwortet keine Entscheidung selbst — er stellt ein, zeigt und schreibt auf.
-- Formatiert TO-DECIDE-Dateien nie um und löscht nichts.
+Project-authored code, documentation, and assets are licensed under the MIT
+License. See [LICENSE](LICENSE). Third-party components and their notices are
+listed in [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -87,21 +87,21 @@
       
       <text x="0" y="142" class="title" font-size="54" fill="url(#title-grad)">Decision-Clicker</text>
       
-      <text x="0" y="184" class="subtitle" font-size="20" fill="#e0f2fe">Interactive Graph Traversal &amp; Decision Chain Evaluator</text>
-      <text x="0" y="210" class="subtitle" font-size="14" fill="#94a3b8" opacity="0.8">Streamlined GUI and CLI engine for traversing and verifying multi-step decision chains.</text>
+      <text x="0" y="184" class="subtitle" font-size="20" fill="#e0f2fe">Local Review &amp; Recording for File-Based Decision Chains</text>
+      <text x="0" y="210" class="subtitle" font-size="14" fill="#94a3b8" opacity="0.8">Conservative Python library, CLI and mini UI with backups, history and guarded undo.</text>
       
       <g transform="translate(0, 246)">
         <g transform="translate(0, 0)">
           <rect width="150" height="32" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
-          <text x="75" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">🎯 Decision Chains</text>
+          <text x="75" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">Decision Chains</text>
         </g>
         <g transform="translate(162, 0)">
           <rect width="145" height="32" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
-          <text x="72" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">⚡ Fast CLI &amp; GUI</text>
+          <text x="72" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">Local CLI &amp; UI</text>
         </g>
         <g transform="translate(319, 0)">
           <rect width="140" height="32" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
-          <text x="70" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">🛡️ Safe Evaluation</text>
+          <text x="70" y="20" text-anchor="middle" class="pill-text" fill="#bae6fd">Guarded Writes</text>
         </g>
       </g>
     </g>

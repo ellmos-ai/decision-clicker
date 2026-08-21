@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Desktop-Intake: erkennen, übernehmen, markieren, deduplizieren.
 
-Gearbeitet wird auf `tests/data/postfach_2026-08-07.txt` — dem eingefrorenen
-Stand des echten Postfachs VOR der ersten Übernahme. Bewusst eingefroren statt
-live kopiert: Das echte Postfach ändert sich (Automationen schreiben hinein, der
-Clicker markiert), und ein Test, dessen Erwartung vom Tagesstand abhängt, prüft
-nichts Verlässliches. Die Datei enthält beide Formate nebeneinander —
+Gearbeitet wird ausschließlich auf `tests/data/postfach_sample.txt`. Die
+synthetische Datei enthält beide Formate nebeneinander —
 Kettenkonvention und die Fremdform `ID: D-…` — und genau daran muss der Scanner
 sich bewähren.
 """
@@ -18,19 +15,14 @@ import pytest
 from decision_clicker import chain, intake, writer
 from decision_clicker.config import Settings
 
-ECHTES_POSTFACH = Path.home() / "OneDrive" / "Desktop" / "TO-DECIDE-USER.txt"
-
-
 OFFEN_ID = "D-20990806-001"       # im frischen Postfach: der offene Eintrag
 ERLEDIGT_IDS = ("D-20990805-001", "D-20990805-002")
 
 
-def test_echtes_postfach_bleibt_lesbar():
-    """Wachhund: Formatänderungen am echten Postfach fallen hier auf."""
-    if not ECHTES_POSTFACH.is_file():
-        pytest.skip("Kein Desktop-Postfach auf diesem Host")
-    eintraege = intake.parse(ECHTES_POSTFACH)
-    assert eintraege, "Postfach vorhanden, aber kein Eintrag erkannt"
+def test_synthetisches_postfach_bleibt_lesbar(postfach: Path):
+    """Wachhund: Änderungen an der veröffentlichten Fixture fallen auf."""
+    eintraege = intake.parse(postfach)
+    assert eintraege, "Fixture vorhanden, aber kein Eintrag erkannt"
     assert all(e.entry_id.startswith("D-") for e in eintraege)
 
 

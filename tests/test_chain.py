@@ -18,7 +18,7 @@ from decision_clicker.ui import parse_options
 def test_kette_wird_gelesen(kette: Settings):
     index = chain.build_index(kette)
     assert index["schema"] == "decisions.index/1"
-    assert index["counts"]["total"] > 100
+    assert index["counts"]["total"] >= 6
 
 
 def test_offene_haben_leeres_entscheidungsfeld(kette: Settings):
@@ -97,15 +97,20 @@ def test_neuer_eintrag_erscheint_als_offen(kette: Settings):
     assert parse_options(eintrag["options_excerpt"]) == [("A", "ja"), ("B", "nein")]
 
 
-def test_einstellen_haengt_an_und_aendert_nichts_davor(kette: Settings, original_bytes):
-    """Der Bestand muss Byte-Praefix des neuen Standes sein — reines Anhaengen."""
+def test_einstellen_bewahrt_bestand_und_nachfolger_pointer(kette: Settings, original_bytes):
+    """Der Bestand bleibt unverändert; ein Nachfolger-Pointer bleibt am Ende."""
     ziel = chain.target_part(kette)
     alt = original_bytes[ziel.name]
+    pointer = b"Pointer /"
+    pointer_start = alt.index(pointer)
+    bestand = alt[:pointer_start]
+    nachfolger = alt[pointer_start:]
     writer.append_entry(kette, ziel, writer.render_entry(
         chain.next_id(chain.build_index(kette)), "Angehaengt"))
     neu = ziel.read_bytes()
-    assert neu.startswith(alt), "Bestehender Text wurde veraendert statt ergaenzt"
-    assert "Angehaengt" in neu[len(alt):].decode("utf-8")
+    assert neu.startswith(bestand), "Bestehender Text wurde verändert"
+    assert neu.endswith(nachfolger), "Nachfolger-Pointer wurde verschoben oder verändert"
+    assert "Angehaengt" in neu[len(bestand):-len(nachfolger)].decode("utf-8")
 
 
 def test_neuer_eintrag_steht_hinter_dem_letzten_bestand(kette: Settings):
