@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format follows
 
 - Derive the OneDrive fallback from the runtime environment instead of a
   hard-coded personal path.
+- Keep the first decision in a fresh Cut-and-Clue part behind its header,
+  predecessor pointer, and quick index instead of inserting it before them.
 - Use a neutral Decision Clicker lock name and owner.
 - Replace host-dependent integration tests with deterministic portable tests.
 - Enforce loopback-only serving, local Host/Origin checks, guarded JSON writes,
