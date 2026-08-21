@@ -340,7 +340,7 @@ def test_lange_optionslisten_werden_vollstaendig_angeboten(server):
     assert "kurz und wichtig" in seite
 
 
-def test_register_zeigt_fundstellen(server):
+def test_register_zeigt_fundstellen(server, postfach):
     url, kette = server
     from decision_clicker import intake
     intake.takeover(kette, on="2026-08-07")
@@ -349,7 +349,7 @@ def test_register_zeigt_fundstellen(server):
     assert "Desktop/TO-DECIDE-USER.txt" in seite, "Postfach-Fundstelle fehlt im Register"
 
 
-def test_register_fuehrt_jede_id_nur_einmal(server):
+def test_register_fuehrt_jede_id_nur_einmal(server, frisches_postfach):
     import re
     url, kette = server
     from decision_clicker import intake
