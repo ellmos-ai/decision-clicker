@@ -4,7 +4,7 @@
   "version": "1.0.1",
   "display_name": "decision-clicker",
   "category": "control",
-  "kind": "application",
+  "kind": "tool",
   "status": "active",
   "visibility": "private",
   "provides": [
