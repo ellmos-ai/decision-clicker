@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `ellmos-module.v2.json`: registers decision-clicker as a structural
+  sub-module of `policy-registry` (ticket T-20260824-474639761, user decision
+  2026-08-24, F2). The relationship is declared as an optional, importable
+  seam (`optional: ["policy.registry"]`, `adapters[].target: "policy-registry"`)
+  rather than a fixed bundle binding, so decision-clicker keeps starting
+  independently and manually (`START.bat` / `python -m decision_clicker`).
+  Both tools point at the same on-disk `_DECISIONS` chain -- the coupling is
+  data-level, not a code dependency in either direction.
+- `tests/test_module_manifest.py`: contract test for the manifest (JSON
+  validity, private-visibility gate while `PRIVATE.txt` exists, optional-not-
+  required seam, version parity with `pyproject.toml`).
+
 ## [1.0.1] - 2026-08-21
 
 ### Added

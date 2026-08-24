@@ -1,0 +1,51 @@
+{
+  "schema": "ellmos.module.v2",
+  "id": "decision-clicker",
+  "version": "1.0.1",
+  "display_name": "decision-clicker",
+  "category": "control",
+  "kind": "application",
+  "status": "active",
+  "visibility": "private",
+  "provides": [
+    "decisions.write",
+    "decisions.review-ui"
+  ],
+  "requires": [],
+  "optional": [
+    "policy.registry"
+  ],
+  "conflicts": [],
+  "surfaces": [
+    "library",
+    "cli",
+    "ui"
+  ],
+  "state": {
+    "ownership": "module",
+    "location": "user-home"
+  },
+  "boundaries": {
+    "network": "local",
+    "data": "user-local",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ]
+  },
+  "source_of_truth": {
+    "type": "git-repository",
+    "path": ".",
+    "repository": "https://github.com/ellmos-ai/decision-clicker"
+  },
+  "adapters": [
+    {
+      "type": "seam",
+      "id": "policy-registry-decision-locations-v1",
+      "target": "policy-registry",
+      "status": "optional",
+      "note": "Structural sub-module relationship (T-20260824-474639761): decision-clicker is the manually startable writer/UI onto the same _DECISIONS chain that policy-registry's adapters.decisions module indexes as pointers. The coupling is data-level (same on-disk chain), not a code dependency in either direction; decision-clicker never imports policy-registry, and policy-registry only probes availability via an optional import (adapters.decision_clicker.available())."
+    }
+  ]
+}

@@ -185,6 +185,13 @@ Windows mit jeder unterstützten Python-Version aus.
   GUI.
 - Es gibt keine Telemetrie und keine Laufzeitabhängigkeit außerhalb der
   Python-Standardbibliothek.
+- Er ist als optionales strukturelles Untermodul von
+  [`policy-registry`](https://github.com/ellmos-ai/policy-registry)
+  registriert (siehe `ellmos-module.v2.json`): Beide Werkzeuge beziehen sich
+  auf dieselbe `_DECISIONS`-Kette auf der Platte — policy-registry als
+  Pointer-/Index-Leser, dieses Werkzeug als Schreiber. Die Beziehung ist rein
+  datenseitig; keines importiert das andere, und dieses Werkzeug bleibt
+  weiterhin eigenständig und manuell startbar.
 
 Vor Betrieb oder Mitarbeit bitte [SECURITY.md](SECURITY.md),
 [PRIVACY.md](PRIVACY.md) und [CONTRIBUTING.md](CONTRIBUTING.md) lesen.
