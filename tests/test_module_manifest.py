@@ -23,15 +23,16 @@ def test_manifest_stays_private_until_the_publication_gate_opens():
         assert data["visibility"] == "private"
 
 
-def test_manifest_declares_policy_registry_as_an_optional_data_seam():
-    """decision-clicker bleibt manuell startbar: keine feste Bundle-Bindung."""
+def test_manifest_exposes_fixed_decision_bundle_capability():
+    """Die Registry kann den Clicker als festen Bundle-Baustein verlangen."""
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert "decision.clicker" in data["provides"]
     assert "policy.registry" in data["optional"]
     assert "policy.registry" not in data["requires"]
     seams = [a for a in data["adapters"] if a.get("target") == "policy-registry"]
     assert len(seams) == 1
     assert seams[0]["type"] == "seam"
-    assert seams[0]["status"] == "optional"
+    assert seams[0]["status"] == "required-by-target-bundle"
 
 
 def test_manifest_version_matches_pyproject():

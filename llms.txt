@@ -37,3 +37,5 @@
 - The mini server is local-only and unauthenticated; never expose it remotely.
 - The tool records user choices. It does not decide, predict, or verify
   implementation.
+- `decision.clicker` is a required capability of policy-registry's decision
+  bundle. This is a composition contract, not a Python import dependency.

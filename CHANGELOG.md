@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Promote `decision-clicker` from an optional policy-registry seam to the
+  fixed human writer/UI component of the decision-system bundle. The parent
+  registry now requires the `decision.clicker` capability, while this package
+  remains directly startable and keeps the integration data-level.
 - Adopt the one-document active contract: only unanswered, decision-ready
   entries in `TO-DECIDE-USER.txt` are clickable or counted as active.
 - A click now stores reversible full-block evidence and removes the answered
@@ -17,12 +21,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- `ellmos-module.v2.json`: registers decision-clicker as a structural
-  sub-module of `policy-registry` (ticket T-20260824-474639761, user decision
-  2026-08-24, F2). The relationship is declared as an optional, importable
-  seam (`optional: ["policy.registry"]`, `adapters[].target: "policy-registry"`)
-  rather than a fixed bundle binding, so decision-clicker keeps starting
-  independently and manually (`START.bat` / `python -m decision_clicker`).
+- `ellmos-module.v2.json`: originally registered decision-clicker as an
+  optional structural sub-module of `policy-registry` (ticket
+  T-20260824-474639761, user decision 2026-08-24, F2). The 2026-08-27 user
+  decision supersedes only the optional composition status; the historical
+  data-level seam remains documented.
   Both tools point at the same on-disk `_DECISIONS` chain -- the coupling is
   data-level, not a code dependency in either direction.
 - `tests/test_module_manifest.py`: contract test for the manifest (JSON
