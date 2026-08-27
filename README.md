@@ -33,7 +33,7 @@ indexes are rebuildable caches.
 
 - Python 3.10 through 3.13.
 - A decision-chain directory containing:
-  - one or more `TO-DECIDE-USER*.txt` files;
+  - exactly one active `TO-DECIDE-USER.txt` file;
   - `DECIDED-AND-DONE.md`;
   - `_tools/decisions_index.py`, implementing the `decisions.index/1`
     parser contract.
@@ -135,14 +135,17 @@ curl -H "Content-Type: application/json" \
 For a decision click, the writer:
 
 1. rejects foreign locks;
-2. verifies that the indexed line still belongs to the expected decision ID;
-3. creates a backup under `_decision-archive/_bak/`;
-4. fills only `ENTSCHEIDUNG DES USERS:` and adds a dated tool marker;
-5. appends evidence to `DECIDED-AND-DONE.md`;
+2. verifies the one-document active contract and the indexed decision ID;
+3. creates byte-preserving backups under `_decision-archive/_bak/`;
+4. appends the choice, provenance, and a reversible copy of the complete open
+   block to `DECIDED-AND-DONE.md`;
+5. removes the answered block from `TO-DECIDE-USER.txt` immediately;
 6. rebuilds the derived index artifacts.
 
-It never marks implementation as verified. A decision remains in the active
-chain until the surrounding governance process verifies implementation.
+It never marks implementation as verified. Implementation status remains a
+separate governance concern and never keeps an answered question active. Undo
+restores only a complete block previously secured by Decision Clicker and adds
+an append-only reset marker to the historical evidence.
 
 ## Legacy inbox intake
 
@@ -162,14 +165,15 @@ python -m build
 The test suite covers parsing, configuration, lock behavior, byte-preserving
 writes, backups, ID allocation, structural-injection protection, all creation
 paths, HTTP origin/host checks, concurrent requests, intake, history, and
-byte-identical decision/undo round trips. CI runs it on Linux, macOS, and
+full-block-preserving decision/undo round trips. CI runs it on Linux, macOS, and
 Windows with every supported Python version.
 
 ## Boundaries
 
 - Decision Clicker records user choices; it does not choose on the user's
   behalf and does not predict answers.
-- It does not verify implementation or move entries into a completed state.
+- It removes answered questions from the active template, but does not verify
+  implementation or claim a completed implementation state.
 - It does not own the decision-chain parser or the optional Unified GUI.
 - It has no telemetry and no runtime dependency outside the Python standard
   library.

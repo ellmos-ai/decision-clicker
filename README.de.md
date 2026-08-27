@@ -38,7 +38,7 @@ Markdown-Indizes sind jederzeit neu aufbaubare Zwischenspeicher.
 
 - Python 3.10 bis 3.13.
 - Ein Ordner mit der Entscheidungskette und folgenden Bestandteilen:
-  - mindestens eine Datei `TO-DECIDE-USER*.txt`;
+  - genau eine aktive Datei `TO-DECIDE-USER.txt`;
   - `DECIDED-AND-DONE.md`;
   - `_tools/decisions_index.py` mit dem Parser-Vertrag `decisions.index/1`.
 
@@ -142,16 +142,18 @@ curl -H "Content-Type: application/json" \
 Bei einem Entscheidungsklick führt der Writer folgende Schritte aus:
 
 1. fremde Sperren ablehnen;
-2. prüfen, ob die indizierte Zeile weiterhin zur erwarteten Entscheidungs-ID
-   gehört;
-3. Sicherung unter `_decision-archive/_bak/` anlegen;
-4. nur `ENTSCHEIDUNG DES USERS:` füllen und einen datierten Werkzeugvermerk
-   ergänzen;
-5. den Beleg an `DECIDED-AND-DONE.md` anhängen;
+2. den Ein-Dokument-Aktivvertrag und die indizierte Entscheidungs-ID prüfen;
+3. byteerhaltende Sicherungen unter `_decision-archive/_bak/` anlegen;
+4. Auswahl, Provenienz und eine reversible Kopie des vollständigen offenen
+   Blocks an `DECIDED-AND-DONE.md` anhängen;
+5. den beantworteten Block sofort aus `TO-DECIDE-USER.txt` entfernen;
 6. die abgeleiteten Indexartefakte erneuern.
 
-Das Werkzeug bestätigt niemals die Umsetzung. Eine Entscheidung bleibt in der
-aktiven Kette, bis der umgebende Governance-Prozess die Umsetzung verifiziert.
+Das Werkzeug bestätigt niemals die Umsetzung. Der Umsetzungsstand bleibt eine
+getrennte Governance-Frage und hält eine beantwortete Frage nicht aktiv. Undo
+stellt ausschließlich einen zuvor vom Decision Clicker gesicherten Vollblock
+wieder her und ergänzt den historischen Beleg um einen append-only
+Rücksetzvermerk.
 
 ## Übernahme aus einem Alt-Postfach
 
@@ -172,15 +174,15 @@ Die Tests prüfen Parser-Anbindung, Konfiguration, Sperrverhalten,
 byteerhaltende Schreibzugriffe, Sicherungen, ID-Vergabe, Schutz vor
 Strukturinjektion, alle Anlagewege, HTTP-Origin-/Host-Prüfungen, parallele
 Anfragen, Postfachübernahme, Verlauf und byteidentische
-Entscheidung/Rückgängig-Rundläufe. Die CI führt sie unter Linux, macOS und
+Vollblock-Entscheidung/Rückgängig-Rundläufe. Die CI führt sie unter Linux, macOS und
 Windows mit jeder unterstützten Python-Version aus.
 
 ## Grenzen
 
 - Decision Clicker hält Nutzerentscheidungen fest; er entscheidet nicht für
   den Nutzer und sagt keine Antworten voraus.
-- Er verifiziert keine Umsetzung und verschiebt keine Einträge in einen
-  abgeschlossenen Zustand.
+- Er entfernt beantwortete Fragen aus der aktiven Vorlage, verifiziert aber
+  keine Umsetzung und behauptet keinen abgeschlossenen Umsetzungszustand.
 - Er besitzt weder den Parser der Entscheidungskette noch die optionale Unified
   GUI.
 - Es gibt keine Telemetrie und keine Laufzeitabhängigkeit außerhalb der

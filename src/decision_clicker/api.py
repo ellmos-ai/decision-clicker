@@ -57,7 +57,8 @@ class DecisionClicker:
     def usable(self) -> bool:
         """Ist die Kette JETZT bedienbar? Wirft nie — fuer probe()-Aufrufer."""
         try:
-            chain.build_index(self.settings)
+            index = chain.build_index(self.settings)
+            chain.require_valid_contract(index)
             return True
         except Exception:  # noqa: BLE001
             return False
@@ -67,6 +68,7 @@ class DecisionClicker:
         return {
             "chain_dir": str(self.settings.chain_dir),
             "counts": chain.counts(index),
+            "active_contract": index.get("active_contract", {}),
             "next_id": chain.next_id(index),
             "target_file": chain.target_part(self.settings).name,
             "intake_pending": len(self.intake_pending()),
@@ -125,19 +127,22 @@ class DecisionClicker:
                 "— es wird nicht geschrieben.")
 
     def decide(self, key: str, choice: str, note: str = "") -> dict:
-        """Entscheidungsfeld fuellen, Beleg schreiben, Index nachziehen."""
+        """Entscheidung belegen und sofort aus der Aktivvorlage entfernen."""
         with writer.MUTATION_LOCK:
             self._guard()
             if not (choice or "").strip():
                 raise WriteError("Ohne Auswahl wird nichts eingetragen.")
             index = chain.build_index(self.settings)
+            chain.require_valid_contract(index)
             entry = chain.find(index, key)
             if entry is None:
+                if any(item["id"] == key and item["status"] == "aktiv"
+                       for item in chain.clicker_history(self.settings)):
+                    raise WriteError(f"{key} ist bereits entschieden und nicht mehr aktiv.")
                 raise WriteError(f"{key} steht nicht in der Kette.")
-            ergebnis = writer.fill_decision(
-                self.settings, Path(entry["source_path"]), entry["source_line"],
-                choice, note, expected_id=entry["id"])
-            writer.append_done(self.settings, entry, choice, note)
+            if entry.get("decision_ready") is not True:
+                raise WriteError(f"{key} ist nicht entscheidungsreif aktiv.")
+            ergebnis = writer.decide_entry(self.settings, entry, choice, note)
             self._refresh()
             return {"ok": True, "id": entry["id"], "key": key, **ergebnis}
 
@@ -157,14 +162,15 @@ class DecisionClicker:
         """
         with writer.MUTATION_LOCK:
             self._guard()
-            index = chain.build_index(self.settings)
-            entry = chain.find(index, key)
+            entry = next(
+                (item for item in chain.clicker_history(self.settings)
+                 if item["id"] == key and item["status"] == "aktiv"),
+                None,
+            )
             if entry is None:
-                raise WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
-            if entry["status_class"] != chain.STATUS_PENDING:
                 raise WriteError(
-                    f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
-                    f"(aktuell: {entry['status_class']}) — nicht rückgängig machbar.")
+                    f"{key} hat keinen offenen Clicker-Beleg — extern entschieden "
+                    "oder bereits zurückgesetzt, nicht rückgängig machbar.")
             ergebnis = writer.undo_decision(self.settings, entry, reason)
             self._refresh()
             return ergebnis
@@ -178,6 +184,7 @@ class DecisionClicker:
             if not (title or "").strip():
                 raise WriteError("Ohne Titel wird nichts eingestellt.")
             index = chain.build_index(self.settings)
+            chain.require_valid_contract(index)
             entry_id = chain.next_id(index)
             ziel = chain.target_part(self.settings)
             rendered = writer.render_entry(

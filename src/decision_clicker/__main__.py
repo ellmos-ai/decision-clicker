@@ -51,9 +51,13 @@ def cmd_check(args: argparse.Namespace) -> int:
           f"done={werte['done']} archiviert={werte['archiviert']} gesamt={werte['gesamt']}")
     print(f"  nächste freie ID: {chain.next_id(index)}")
     print(f"  Ziel für neue Einträge: {chain.target_part(settings).name}")
+    vertrag = index.get("active_contract", {})
+    print(f"  Aktivvertrag: {'gültig' if vertrag.get('valid') else 'UNGÜLTIG'}")
+    for error in vertrag.get("errors", []):
+        print(f"    - {error}")
     print(f"  Desktop-Postfach: {len(offen_postfach)} noch nicht übernommen"
           + (f" ({', '.join(e['id'] for e in offen_postfach)})" if offen_postfach else ""))
-    return 0
+    return 0 if vertrag.get("valid") else 1
 
 
 def cmd_add(args: argparse.Namespace) -> int:
@@ -64,6 +68,7 @@ def cmd_add(args: argparse.Namespace) -> int:
             print(f"ABBRUCH: fremde Sperre {[p.name for p in fremde]}", file=sys.stderr)
             return 3
         index = chain.build_index(settings)
+        chain.require_valid_contract(index)
         entry_id = chain.next_id(index)
         ziel = chain.target_part(settings)
         rendered = writer.render_entry(

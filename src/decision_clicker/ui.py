@@ -268,11 +268,11 @@ Ziel: <code>{escape(ziel)}</code></div>
 <label>Titel <span class="hint">(kurz, ohne ID)</span></label>
 <input name="title" required placeholder="Wovon handelt die Entscheidung?">
 <label>Frage <span class="hint">(was genau ist zu entscheiden?)</span></label>
-<input name="frage" placeholder="Soll … oder …?">
+<input name="frage" required placeholder="Soll … oder …?">
 <label>Kontext <span class="hint">(Fakten, Stand, Folgen — mehrzeilig)</span></label>
 <textarea name="kontext" rows="6"></textarea>
 <label>Optionen <span class="hint">(je Zeile eine, beginnend mit A/B/C)</span></label>
-<textarea name="optionen" rows="4" placeholder="A — …&#10;B — …"></textarea>
+<textarea name="optionen" rows="4" required placeholder="A — …&#10;B — …"></textarea>
 <label>Empfehlung</label>
 <input name="empfehlung" placeholder="A — weil …">
 <label>Quelle <span class="hint">(Datei, Lauf, Briefing)</span></label>

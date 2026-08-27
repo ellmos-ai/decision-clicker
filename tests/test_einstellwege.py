@@ -64,7 +64,9 @@ def test_api_schreibt_in_die_kette_nicht_auf_den_desktop(server):
     url, kette = server
     postfach = intake.DEFAULT_SOURCES[0] if intake.DEFAULT_SOURCES else None
     stand = postfach.read_bytes() if postfach else None
-    _status, daten = sende_json(f"{url}/api/new", {"title": "Zielprüfung"})
+    _status, daten = sende_json(f"{url}/api/new", {
+        "title": "Zielprüfung", "frage": "Welcher Zielpfad gilt?",
+        "optionen": ["A — kanonisch", "B — abbrechen"]})
     assert Path(daten["file"]).parent == kette.chain_dir
     if postfach:
         assert postfach.read_bytes() == stand, "Desktop-Postfach wurde beschrieben"
@@ -73,7 +75,8 @@ def test_api_schreibt_in_die_kette_nicht_auf_den_desktop(server):
 def test_api_entscheidet_und_liefert_json(server):
     url, kette = server
     _s, daten = sende_json(f"{url}/api/new", {
-        "title": "Sofort entscheidbar", "optionen": ["A — so", "B — anders"]})
+        "title": "Sofort entscheidbar", "frage": "Welche Variante gilt?",
+        "optionen": ["A — so", "B — anders"]})
     status, ergebnis = sende_json(f"{url}/api/decide",
                                   {"key": daten["id"], "choice": "A", "note": "per API"})
     assert status == 200 and ergebnis["ok"] is True
@@ -92,7 +95,8 @@ def test_api_lehnt_zeileninjektion_im_titel_ab(server):
     vorher = chain.counts(chain.build_index(kette))["gesamt"]
     status, _daten = sende_json(
         f"{url}/api/new",
-        {"title": "Legitim\nD-20990101-999 — eingeschleust"},
+        {"title": "Legitim\nD-20990101-999 — eingeschleust", "frage": "Test?",
+         "optionen": ["A — ja", "B — nein"]},
     )
     assert status == 409
     assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
@@ -103,7 +107,8 @@ def test_api_lehnt_zeileninjektion_in_einer_option_ab(server):
     vorher = chain.counts(chain.build_index(kette))["gesamt"]
     status, _daten = sende_json(
         f"{url}/api/new",
-        {"title": "Legitim", "optionen": ["A — ok\nD-20990101-995 — eingeschleust"]},
+        {"title": "Legitim", "frage": "Test?",
+         "optionen": ["A — ok\nD-20990101-995 — eingeschleust"]},
     )
     assert status == 409
     assert chain.counts(chain.build_index(kette))["gesamt"] == vorher
@@ -114,7 +119,9 @@ def test_api_rendert_mehrzeiligen_kontext_parserfest(server):
     vorher = chain.counts(chain.build_index(kette))["gesamt"]
     status, daten = sende_json(
         f"{url}/api/new",
-        {"title": "Sicherer Kontext", "kontext": "Absatz\nD-20990101-998 — kein Eintrag"},
+        {"title": "Sicherer Kontext", "frage": "Test?",
+         "optionen": ["A — ja", "B — nein"],
+         "kontext": "Absatz\nD-20990101-998 — kein Eintrag"},
     )
     assert status == 200
     index = chain.build_index(kette)
@@ -142,7 +149,9 @@ def test_cli_add_stellt_ein(kette: Settings, capsys):
 
 def test_cli_dry_run_schreibt_nicht(kette: Settings, capsys):
     stand = chain.target_part(kette).read_bytes()
-    assert cli.main(["add", "Nur gucken", "--chain", str(kette.chain_dir), "--dry-run"]) == 0
+    assert cli.main(["add", "Nur gucken", "--frage", "Welche Variante?",
+                     "--option", "A — ja", "--option", "B — nein",
+                     "--chain", str(kette.chain_dir), "--dry-run"]) == 0
     assert "ENTSCHEIDUNG DES USERS" in capsys.readouterr().out
     assert chain.target_part(kette).read_bytes() == stand
 
@@ -162,10 +171,13 @@ def test_alle_drei_wege_erzeugen_gleichartige_eintraege(server, capsys):
     from urllib.parse import urlencode
     urllib.request.urlopen(  # Weg 1: Formular
         f"{url}/api/new",
-        data=urlencode({"title": "Weg Formular", "optionen": "A — x\nB — y"}).encode(),
+        data=urlencode({"title": "Weg Formular", "frage": "Welche Variante?",
+                        "optionen": "A — x\nB — y"}).encode(),
         timeout=10).read()
-    sende_json(f"{url}/api/new", {"title": "Weg API", "optionen": ["A — x", "B — y"]})
-    cli.main(["add", "Weg CLI", "--option", "A — x", "--option", "B — y",
+    sende_json(f"{url}/api/new", {"title": "Weg API", "frage": "Welche Variante?",
+                                        "optionen": ["A — x", "B — y"]})
+    cli.main(["add", "Weg CLI", "--frage", "Welche Variante?",
+              "--option", "A — x", "--option", "B — y",
               "--chain", str(kette.chain_dir)])
     capsys.readouterr()
 
@@ -217,7 +229,8 @@ def test_fassade_bietet_alles_was_eine_oberflaeche_braucht(kette: Settings):
     assert {"chain_dir", "counts", "next_id", "target_file",
             "intake_pending", "foreign_locks"} <= set(stand)
 
-    neu = c.create("Über die Fassade", optionen=["A — x", "B — y"], empfehlung="A — weil")
+    neu = c.create("Über die Fassade", frage="Welche Variante?",
+                   optionen=["A — x", "B — y"], empfehlung="A — weil")
     detail = c.detail(neu["id"])
     assert [o["letter"] for o in detail["optionen"]] == ["A", "B"]
     assert detail["recommended"] == "A"
@@ -270,8 +283,10 @@ def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings):
 @pytest.mark.parametrize(
     ("kwargs", "meldung"),
     [
-        ({"title": "Legitim\nD-20990101-997 — eingeschleust"}, "Titel"),
-        ({"title": "Legitim", "optionen": ["A — ok\nD-20990101-996 — eingeschleust"]},
+        ({"title": "Legitim\nD-20990101-997 — eingeschleust", "frage": "Test?",
+          "optionen": ["A — ja", "B — nein"]}, "Titel"),
+        ({"title": "Legitim", "frage": "Test?",
+          "optionen": ["A — ok\nD-20990101-996 — eingeschleust"]},
          "Option"),
     ],
 )

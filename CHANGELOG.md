@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Adopt the one-document active contract: only unanswered, decision-ready
+  entries in `TO-DECIDE-USER.txt` are clickable or counted as active.
+- A click now stores reversible full-block evidence and removes the answered
+  block from the active template; undo restores that block and retains the
+  append-only reset history.
+- New entries require an explicit question and options, and ID allocation also
+  reserves identifiers found in nested historical archives.
+
 ### Added
 
 - `ellmos-module.v2.json`: registers decision-clicker as a structural

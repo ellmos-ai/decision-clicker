@@ -12,6 +12,13 @@ from decision_clicker.config import Settings
 from decision_clicker.ui import parse_options
 
 
+def _render(entry_id: str, title: str, **kwargs) -> str:
+    """Kleinste entscheidungsreife synthetische Vorlage."""
+    kwargs.setdefault("frage", "Welche Testvariante gilt?")
+    kwargs.setdefault("optionen", ["A — erste", "B — zweite"])
+    return writer.render_entry(entry_id, title, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Lesen
 # ---------------------------------------------------------------------------
@@ -55,6 +62,16 @@ def test_id_vergabe_beachtet_auch_archiv_und_done(kette: Settings):
     assert chain.next_id(index) not in archiviert
 
 
+def test_id_vergabe_beachtet_auch_nur_im_manifest_belegte_ids(kette: Settings):
+    nested = kette.archive_dir / "historischer-lauf"
+    nested.mkdir()
+    (nested / "MANIFEST.md").write_text(
+        "Früher belegt: D-20991231-001\n", encoding="utf-8")
+    index = chain.build_index(kette)
+    assert "D-20991231-001" in chain.known_ids(index)
+    assert chain.next_id(index, date(2099, 12, 31)) == "D-20991231-002"
+
+
 def test_zweite_id_am_selben_tag_zaehlt_hoch(kette: Settings):
     """Aufsteigend und frei — aber NICHT zwingend +1.
 
@@ -66,7 +83,7 @@ def test_zweite_id_am_selben_tag_zaehlt_hoch(kette: Settings):
     tag = date(2026, 8, 7)
     erste = chain.next_id(index, tag)
     ziel = chain.target_part(kette)
-    writer.append_entry(kette, ziel, writer.render_entry(erste, "Testeintrag eins"))
+    writer.append_entry(kette, ziel, _render(erste, "Testeintrag eins"))
 
     nachher = chain.build_index(kette)
     zweite = chain.next_id(nachher, tag)
@@ -83,7 +100,7 @@ def test_neuer_eintrag_erscheint_als_offen(kette: Settings):
     vorher = chain.counts(index)["offen"]
     neu_id = chain.next_id(index)
     ziel = chain.target_part(kette)
-    writer.append_entry(kette, ziel, writer.render_entry(
+    writer.append_entry(kette, ziel, _render(
         neu_id, "Soll der Clicker getestet werden?",
         frage="Test?", optionen=["A — ja", "B — nein"], empfehlung="A — weil Test",
         quelle="tests/test_chain.py"))
@@ -97,20 +114,15 @@ def test_neuer_eintrag_erscheint_als_offen(kette: Settings):
     assert parse_options(eintrag["options_excerpt"]) == [("A", "ja"), ("B", "nein")]
 
 
-def test_einstellen_bewahrt_bestand_und_nachfolger_pointer(kette: Settings, original_bytes):
-    """Der Bestand bleibt unverändert; ein Nachfolger-Pointer bleibt am Ende."""
+def test_einstellen_bewahrt_den_vollstaendigen_bestand(kette: Settings, original_bytes):
+    """Anhängen verändert kein Byte des bestehenden Aktivdokuments."""
     ziel = chain.target_part(kette)
     alt = original_bytes[ziel.name]
-    pointer = b"Pointer /"
-    pointer_start = alt.index(pointer)
-    bestand = alt[:pointer_start]
-    nachfolger = alt[pointer_start:]
-    writer.append_entry(kette, ziel, writer.render_entry(
+    writer.append_entry(kette, ziel, _render(
         chain.next_id(chain.build_index(kette)), "Angehaengt"))
     neu = ziel.read_bytes()
-    assert neu.startswith(bestand), "Bestehender Text wurde verändert"
-    assert neu.endswith(nachfolger), "Nachfolger-Pointer wurde verschoben oder verändert"
-    assert "Angehaengt" in neu[len(bestand):-len(nachfolger)].decode("utf-8")
+    assert neu.startswith(alt), "Bestehender Text wurde verändert"
+    assert "Angehaengt" in neu[len(alt):].decode("utf-8")
 
 
 def test_neuer_eintrag_steht_hinter_dem_letzten_bestand(kette: Settings):
@@ -122,59 +134,61 @@ def test_neuer_eintrag_steht_hinter_dem_letzten_bestand(kette: Settings):
         if Path(e["source_path"]) == ziel
     )
     neu_id = chain.next_id(vorher)
-    writer.append_entry(kette, ziel, writer.render_entry(neu_id, "Ganz hinten"))
+    writer.append_entry(kette, ziel, _render(neu_id, "Ganz hinten"))
     eintrag = chain.find(chain.build_index(kette), neu_id)
     assert eintrag["source_line"] > letzte_zeile
 
 
-def test_erster_eintrag_in_frischem_kettenteil_bleibt_hinter_dem_kopf(
-    kette: Settings,
-):
-    """Ein Vorlaeufer-Pointer im Kopf ist kein Nachfolger-Pointer am Dateiende."""
-    ziel = kette.chain_dir / "TO-DECIDE-USER_9.txt"
-    ziel.write_text(
-        "# TO-DECIDE-USER — Teil 9\n\n"
-        "Pointer / Vorläufer:\n"
-        "Teil 8: TO-DECIDE-USER_8.txt\n"
-        "---\n\n"
-        "## Schnellindex — Teil 9 von 9\n\n"
-        "- D-20990101-001 — Erster Eintrag — OFFEN\n",
-        encoding="utf-8",
-    )
-
-    writer.append_entry(
-        kette,
-        ziel,
-        writer.render_entry("D-20990101-001", "Erster Eintrag"),
-    )
-
-    text = ziel.read_text(encoding="utf-8")
-    assert text.index("Pointer / Vorläufer:") < text.index("D-20990101-001 — Erster Eintrag\n\nSTATUS")
-    assert text.index("## Schnellindex") < text.index("D-20990101-001 — Erster Eintrag\n\nSTATUS")
+def test_zielwahl_bleibt_beim_einen_kanonischen_dokument(kette: Settings):
+    """Auch eine Konfliktkopie darf nie zum neuen Aktivziel werden."""
+    konflikt = kette.chain_dir / "TO-DECIDE-USER_9.txt"
+    konflikt.write_text("historischer Konfliktstand", encoding="utf-8")
+    assert chain.target_part(kette).name == "TO-DECIDE-USER.txt"
+    index = chain.build_index(kette)
+    assert index["active_contract"]["valid"] is False
 
 
-def test_neuer_eintrag_ist_sofort_klickbar(kette: Settings):
+def test_ungueltiger_aktivvertrag_blockiert_schreibwege(kette: Settings):
+    from decision_clicker.api import DecisionClicker
+
+    konflikt = kette.chain_dir / "TO-DECIDE-USER_2.txt"
+    konflikt.write_text("Konfliktstand", encoding="utf-8")
+    stand = chain.target_part(kette).read_bytes()
+    clicker = DecisionClicker(kette.chain_dir)
+    assert clicker.usable() is False
+    with pytest.raises(chain.ChainError, match="Ungültiger Aktivvertrag"):
+        clicker.create(
+            "Blockierter Test", frage="Welche Variante?",
+            optionen=["A — eins", "B — zwei"])
+    assert chain.target_part(kette).read_bytes() == stand
+
+
+def test_neuer_eintrag_ist_sofort_klickbar_und_verlaesst_dann_aktiv(kette: Settings):
     neu_id = chain.next_id(chain.build_index(kette))
     ziel = chain.target_part(kette)
-    writer.append_entry(kette, ziel, writer.render_entry(
+    writer.append_entry(kette, ziel, _render(
         neu_id, "Direkt entscheidbar", optionen=["A — so", "B — anders"]))
     eintrag = chain.find(chain.build_index(kette), neu_id)
-    writer.fill_decision(kette, Path(eintrag["source_path"]), eintrag["source_line"],
-                         "A", on="2026-08-07")
+    writer.decide_entry(kette, eintrag, "A", on="2026-08-07")
     danach = chain.find(chain.build_index(kette), neu_id)
-    assert danach["status_class"] == chain.STATUS_PENDING
+    assert danach is None
 
 
 def test_done_register_bekommt_einen_beleg(kette: Settings):
     index = chain.build_index(kette)
     eintrag = chain.open_entries(index)[0]
-    writer.fill_decision(kette, Path(eintrag["source_path"]), eintrag["source_line"],
-                         "B", "Notiz", on="2026-08-07")
-    writer.append_done(kette, eintrag, "B", "Notiz", on="2026-08-07")
+    writer.decide_entry(kette, eintrag, "B", "Notiz", on="2026-08-07")
     text = kette.done_file.read_text(encoding="utf-8-sig")
     assert eintrag["id"] in text
     assert "[B — Notiz]" in text
     assert "ENTSCHIEDEN AM: 2026-08-07" in text
+
+
+def test_unvollstaendige_neue_vorlage_wird_abgelehnt():
+    with pytest.raises(writer.WriteError, match="Frage"):
+        writer.render_entry("D-20990101-001", "Ohne Frage", optionen=["A — ja"])
+    with pytest.raises(writer.WriteError, match="Optionen"):
+        writer.render_entry("D-20990101-001", "Ohne Optionen", frage="Test?")
 
 
 # ---------------------------------------------------------------------------

@@ -36,11 +36,11 @@ def test_beide_formate_werden_erkannt(postfach: Path):
     assert "D-20260806-001" in ids, "Fremdform 'ID: D-…' nicht erkannt"
 
 
-def test_fremdform_ist_fuer_den_kettenparser_unsichtbar(postfach: Path, kette: Settings):
-    """Begründung für den eigenen Scanner — sonst wäre er nicht zu rechtfertigen."""
+def test_fremdform_ist_auch_fuer_den_kanonischen_parser_sichtbar(postfach: Path, kette: Settings):
+    """Der konsolidierte Parser erkennt die Legacy-ID ohne zweiten Aktivpfad."""
     tool = chain._load_index_tool(kette.index_script)
     sichtbar = {e.entry_id for e in tool.parse_file(postfach, "intake")}
-    assert "D-20260806-001" not in sichtbar
+    assert "D-20260806-001" in sichtbar
     assert "D-20260806-001" in {e.entry_id for e in intake.parse(postfach)}
 
 

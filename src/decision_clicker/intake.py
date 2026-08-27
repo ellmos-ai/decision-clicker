@@ -261,7 +261,7 @@ def render_takeover(entry: IntakeEntry, *, on: str | None = None, newline: str =
 def takeover(settings: Settings, *, dry_run: bool = False, on: str | None = None) -> list[dict]:
     """Postfach leeren: jeden neuen Eintrag in die Kette holen und dort vermerken.
 
-    Offene Einträge landen im letzten Kettenteil, bereits entschiedene als
+    Offene Einträge landen im kanonischen Aktivdokument, bereits entschiedene als
     Beleg in `DECIDED-AND-DONE.md`. Die ursprüngliche D-ID bleibt in beiden
     Fällen erhalten — IDs werden nie neu vergeben, sie können extern
     referenziert sein.
@@ -270,6 +270,7 @@ def takeover(settings: Settings, *, dry_run: bool = False, on: str | None = None
 
     stamp = on or datetime.now().strftime("%Y-%m-%d")
     index = chain.build_index(settings)
+    chain.require_valid_contract(index)
     offene = pending(settings, chain.known_ids(index))
     if not offene:
         return []
@@ -281,6 +282,11 @@ def takeover(settings: Settings, *, dry_run: bool = False, on: str | None = None
 
     ergebnisse: list[dict] = []
     for eintrag in offene:
+        if not eintrag.decided and (not eintrag.frage.strip() or not eintrag.optionen):
+            raise writer.WriteError(
+                f"{eintrag.entry_id} ist im Postfach nicht entscheidungsreif "
+                "(Frage und Optionen sind erforderlich)."
+            )
         ziel = settings.done_file if eintrag.decided else chain.target_part(settings)
         marker = (f"→ {TAKEN_MARK} ({stamp}) — dort als {eintrag.entry_id} in "
                   f"{ziel.name}; dieser Eintrag ist ab hier nur noch Historie.")
