@@ -1,13 +1,14 @@
 {
   "schema": "ellmos.module.v2",
   "id": "decision-clicker",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "display_name": "decision-clicker",
   "category": "control",
   "kind": "tool",
   "status": "active",
   "visibility": "private",
   "provides": [
+    "decision.clicker",
     "decisions.write",
     "decisions.review-ui"
   ],
@@ -44,8 +45,8 @@
       "type": "seam",
       "id": "policy-registry-decision-locations-v1",
       "target": "policy-registry",
-      "status": "optional",
-      "note": "Structural sub-module relationship (T-20260824-474639761): decision-clicker is the manually startable writer/UI onto the same _DECISIONS chain that policy-registry's adapters.decisions module indexes as pointers. The coupling is data-level (same on-disk chain), not a code dependency in either direction; decision-clicker never imports policy-registry, and policy-registry only probes availability via an optional import (adapters.decision_clicker.available())."
+      "status": "required-by-target-bundle",
+      "note": "Decision-system bundle relationship, superseding the optional composition decision from T-20260824-474639761 by user decision on 2026-08-27: policy-registry requires the decision.clicker capability as its fixed human writer/UI component. The coupling remains data-level through the same _DECISIONS chain; decision-clicker still has no runtime import of policy-registry and remains directly startable for maintenance and recovery."
     }
   ]
 }

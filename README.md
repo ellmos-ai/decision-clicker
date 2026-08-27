@@ -177,12 +177,12 @@ Windows with every supported Python version.
 - It does not own the decision-chain parser or the optional Unified GUI.
 - It has no telemetry and no runtime dependency outside the Python standard
   library.
-- It is registered as an optional structural sub-module of
-  [`policy-registry`](https://github.com/ellmos-ai/policy-registry) (see
-  `ellmos-module.v2.json`): both point at the same on-disk `_DECISIONS`
-  chain, policy-registry as a pointer/index reader, this tool as the writer.
-  The relationship is data-level only -- neither imports the other, and this
-  tool keeps starting independently and manually.
+- It is the fixed human writer/UI component of the decision-system bundle
+  owned by [`policy-registry`](https://github.com/ellmos-ai/policy-registry)
+  (see both `ellmos-module.v2.json` manifests): both point at the same on-disk
+  `_DECISIONS` chain, policy-registry as a pointer/index reader and this tool
+  as the controlled writer. This is a composition requirement, not a runtime
+  import: the tool remains directly startable for maintenance and recovery.
 
 See [SECURITY.md](SECURITY.md), [PRIVACY.md](PRIVACY.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md) before deploying or contributing.
