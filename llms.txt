@@ -24,12 +24,16 @@
 ## Non-negotiable invariants
 
 - Text files remain the source of truth; indexes are derived caches.
+- Exactly one `TO-DECIDE-USER.txt` is active; it contains only unanswered,
+  decision-ready entries.
 - Use the chain's `_tools/decisions_index.py`; do not create a second
   production parser.
 - Stop on foreign locks or stale source-line evidence.
 - Never overwrite an existing decision.
 - Back up before writes and preserve unrelated bytes and line endings.
-- Undo only tool-authored decisions and retain append-only evidence.
+- A click records the complete original block, then removes it from active;
+  implementation status stays separate.
+- Undo only tool-authored full-block records and retain append-only evidence.
 - The mini server is local-only and unauthenticated; never expose it remotely.
 - The tool records user choices. It does not decide, predict, or verify
   implementation.

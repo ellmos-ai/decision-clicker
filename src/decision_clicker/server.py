@@ -183,8 +183,8 @@ class Handler(BaseHTTPRequestHandler):
             ziel = chain.target_part(self.settings)
             hinweis = ""
             if chain.part_is_full(ziel):
-                hinweis = (f"{ziel.name} ist lang — nach der Cut-and-Clue-Regel wäre ein "
-                           "neuer Kettenteil fällig. Das entscheidet ein Mensch, nicht dieses Werkzeug.")
+                hinweis = (f"{ziel.name} ist lang — bitte beantwortete oder obsolete Punkte "
+                           "reversibel archivieren. Ein nummerierter Aktiv-Folgeteil ist nicht zulässig.")
             self._send(ui.neu(chain.next_id(index), ziel.name, hinweis))
         elif path == "/register":
             self._register(query.get("q", ""))
@@ -200,7 +200,10 @@ class Handler(BaseHTTPRequestHandler):
                         "quellen": [str(p) for p in intake.sources(self.settings)]})
         elif path == "/api/health":
             index = chain.build_index(self.settings)
-            self._json({"ok": True, "chain": str(self.settings.chain_dir),
+            contract = index.get("active_contract", {})
+            self._json({"ok": contract.get("valid") is True,
+                        "active_contract": contract,
+                        "chain": str(self.settings.chain_dir),
                         "counts": chain.counts(index),
                         "postfach_offen": len(self._postfach(index)),
                         "fremde_sperren": [p.name for p in writer.foreign_locks(self.settings)]})
@@ -215,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
         wanted = query.get("key")
         if wanted:
             entry = chain.find(index, wanted)
-            if entry is None or entry["status_class"] != chain.STATUS_OPEN:
+            if entry is None or entry.get("decision_ready") is not True:
                 self._send(ui.meldung("Nicht mehr offen",
                                       f"{wanted} ist keine offene Entscheidung (mehr).",
                                       "/klick", "Nächste"), 404)
@@ -276,14 +279,17 @@ class Handler(BaseHTTPRequestHandler):
         if not key or not choice:
             raise writer.WriteError("Ohne ID und Auswahl wird nichts eingetragen.")
         index = chain.build_index(self.settings)
+        chain.require_valid_contract(index)
         entry = chain.find(index, key)
         if entry is None:
+            if any(item["id"] == key and item["status"] == "aktiv"
+                   for item in chain.clicker_history(self.settings)):
+                raise writer.WriteError(f"{key} ist bereits entschieden und nicht mehr aktiv.")
             raise writer.WriteError(f"{key} steht nicht in der Kette.")
         note = form.get("note", "").strip()
-        ergebnis = writer.fill_decision(
-            self.settings, Path(entry["source_path"]), entry["source_line"], choice, note,
-            expected_id=entry["id"])
-        writer.append_done(self.settings, entry, choice, note)
+        if entry.get("decision_ready") is not True:
+            raise writer.WriteError(f"{key} ist nicht entscheidungsreif aktiv.")
+        ergebnis = writer.decide_entry(self.settings, entry, choice, note)
         self.skipped.discard(key)
         try:
             chain.refresh_artifacts(self.settings)
@@ -308,15 +314,15 @@ class Handler(BaseHTTPRequestHandler):
         key = key.strip()
         if not key:
             raise writer.WriteError("Ohne ID wird nichts zurückgenommen.")
-        index = chain.build_index(self.settings)
-        entry = chain.find(index, key)
+        entry = next(
+            (item for item in chain.clicker_history(self.settings)
+             if item["id"] == key and item["status"] == "aktiv"),
+            None,
+        )
         if entry is None:
-            raise writer.WriteError(f"{key} steht nicht (mehr) in der aktiven Kette.")
-        if entry["status_class"] != chain.STATUS_PENDING:
             raise writer.WriteError(
-                f"{key} ist nicht im Zustand 'entschieden, Umsetzung offen' "
-                f"(aktuell: {entry['status_class']}) — extern entschieden oder "
-                "bereits zurückgesetzt, nicht rückgängig machbar.")
+                f"{key} hat keinen offenen Clicker-Beleg — extern entschieden "
+                "oder bereits zurückgesetzt, nicht rückgängig machbar.")
         ergebnis = writer.undo_decision(
             self.settings, entry, "Klicker-Oberfläche, rückgängig gemacht")
         try:
@@ -333,6 +339,7 @@ class Handler(BaseHTTPRequestHandler):
         if not title:
             raise writer.WriteError("Ohne Titel wird nichts eingestellt.")
         index = chain.build_index(self.settings)
+        chain.require_valid_contract(index)
         entry_id = chain.next_id(index)
         ziel = chain.target_part(self.settings)
         optionen = [ln.strip() for ln in form.get("optionen", "").splitlines() if ln.strip()]

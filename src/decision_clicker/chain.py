@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
 
-from .config import CUT_AND_CLUE_LINES, Settings
+from .config import ACTIVE_DOCUMENT_WARNING_LINES, Settings
 
 STATUS_OPEN = "OFFEN"
 STATUS_PENDING = "ENTSCHIEDEN_UMSETZUNG_OFFEN"
@@ -24,7 +24,7 @@ STATUS_DONE = "DONE"
 STATUS_ARCHIVED = "ARCHIVIERT"
 
 ID_RE = re.compile(r"D-(\d{8})-(\d{2,4})")
-PART_RE = re.compile(r"^TO-DECIDE-USER(?:_(\d+))?\.txt$", re.I)
+ACTIVE_NAME = "TO-DECIDE-USER.txt"
 
 # ---------------------------------------------------------------------------
 # DECIDED-AND-DONE.md — eigenes, kleines Lesewerkzeug fuer den Verlauf.
@@ -70,6 +70,15 @@ def build_index(settings: Settings) -> dict:
     return tool.build_index(settings.chain_dir)
 
 
+def require_valid_contract(index: dict) -> None:
+    """Schreibzugriffe nur bei einem gültigen Ein-Dokument-Aktivvertrag."""
+    contract = index.get("active_contract", {})
+    if contract.get("valid") is True:
+        return
+    details = "; ".join(contract.get("errors", [])) or "Aktivvertrag nicht ausgewiesen"
+    raise ChainError(f"Ungültiger Aktivvertrag: {details}")
+
+
 def refresh_artifacts(settings: Settings) -> None:
     """`decisions.index.json` + `INDEX-REPORT.md` neu erzeugen.
 
@@ -92,10 +101,10 @@ def refresh_artifacts(settings: Settings) -> None:
 # Sichten
 # ---------------------------------------------------------------------------
 def open_entries(index: dict) -> list[dict]:
-    """Echt offene Eintraege, aelteste zuerst — Aliase bleiben aussen vor."""
+    """Entscheidungsreife aktive Eintraege, aelteste zuerst."""
     items = [
         e for e in index["entries"]
-        if e["status_class"] == STATUS_OPEN and not e["is_alias"]
+        if e.get("decision_ready") is True
     ]
     return sorted(items, key=lambda e: (e["date"], e["id"]))
 
@@ -231,7 +240,7 @@ def known_ids(index: dict) -> set[str]:
     darf nicht neu vergeben werden. Genau daraus sind die bekannten
     Kollisionen entstanden.
     """
-    return {e["id"] for e in index["entries"]}
+    return {e["id"] for e in index["entries"]} | set(index.get("reserved_ids", []))
 
 
 def next_id(index: dict, on: date | None = None) -> str:
@@ -252,21 +261,13 @@ def next_id(index: dict, on: date | None = None) -> str:
 # Zieldatei fuer neue Eintraege
 # ---------------------------------------------------------------------------
 def target_part(settings: Settings) -> Path:
-    """Letzter Kettenteil; laeuft er ueber, wird das gemeldet statt geteilt.
-
-    Ein automatischer Cut-and-Clue-Split waere ein struktureller Eingriff in
-    die Kette — den trifft ein Mensch, nicht dieses Werkzeug.
-    """
-    parts: list[tuple[int, Path]] = []
-    for path in settings.chain_dir.glob("TO-DECIDE-USER*.txt"):
-        match = PART_RE.match(path.name)
-        if match:
-            parts.append((int(match.group(1) or 1), path))
-    if not parts:
-        raise ChainError(f"Kein Kettenteil in {settings.chain_dir} gefunden")
-    _, path = max(parts, key=lambda item: item[0])
+    """Das eine kanonische Aktivdokument fuer neue Eintraege."""
+    path = settings.chain_dir / ACTIVE_NAME
+    if not path.is_file():
+        raise ChainError(f"Kanonisches Aktivdokument fehlt: {path}")
     return path
 
 
 def part_is_full(path: Path) -> bool:
-    return len(path.read_text(encoding="utf-8-sig").splitlines()) > CUT_AND_CLUE_LINES
+    """Nur Warnschwelle: auch lange Aktivstände bleiben genau ein Dokument."""
+    return len(path.read_text(encoding="utf-8-sig").splitlines()) > ACTIVE_DOCUMENT_WARNING_LINES

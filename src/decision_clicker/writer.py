@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: MIT
-"""Konservatives Schreiben in die Entscheidungskette.
+"""Konservatives Schreiben im Ein-Dokument-Aktivvertrag.
 
-Leitsatz: Es wird genau das Entscheidungsfeld gefuellt und genau eine
-Datumszeile ergaenzt. Kein Umformatieren, kein Neuschreiben, keine
-Zeilenenden-Normalisierung, keine Encoding-Umstellung. Alles andere in der
-Datei bleibt Byte fuer Byte, wie es war — die Testsuite belegt das.
-
-Warum die Datumszeile hinter einer Leerzeile steht: Der Kettenparser sammelt
-Feldwerte mehrzeilig bis zur naechsten Leerzeile. Ohne die Leerzeile wuerde
-das Datum in den Entscheidungswert gezogen und im Index-Report als Teil der
-Entscheidung erscheinen. Mit ihr bleibt der Index sauber.
+Ein Klick sichert den offenen Originalblock, schreibt einen append-only Beleg
+und entfernt den beantworteten Block aus der Aktivvorlage. Undo stellt nur
+einen nachweislich vom Clicker gesicherten Originalblock wieder her. Die
+kleinen Low-Level-Helfer für Feldänderungen bleiben für Regressionstests und
+kontrollierte Migrationen verfügbar.
 """
 from __future__ import annotations
 
+import base64
 import re
 import shutil
 import threading
@@ -27,6 +24,7 @@ DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:", re.I)
 CLICKER_DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:.*\(decision-clicker\)\s*$", re.I)
 POINTER_RE = re.compile(r"^\s*Pointer\s*/", re.I)
 SEPARATOR_RE = re.compile(r"^\s*-{3,}\s*$")
+ORIGINAL_BLOCK_RE = re.compile(r"^ORIGINALBLOCK-BASE64\s*:\s*([A-Za-z0-9+/=]+)\s*$", re.I)
 
 TOOL_TAG = "decision-clicker"
 PLACEHOLDER = "[HIER EINTRAGEN]"
@@ -274,6 +272,35 @@ def revert_decision(
     }
 
 
+def remove_entry(
+    settings: Settings,
+    path: Path,
+    start_line: int,
+    *,
+    expected_id: str,
+    make_backup: bool = True,
+) -> dict:
+    """Einen exakt adressierten Eintragsblock aus dem Aktivdokument entfernen."""
+    text, has_bom = _read(path)
+    lines = text.splitlines(keepends=True)
+    start, end = entry_bounds(settings, lines, start_line)
+    heading = _load_index_tool(settings.index_script).match_heading(
+        lines[start].rstrip("\r\n"))
+    actual_id = heading[0] if heading else None
+    if actual_id != expected_id:
+        raise WriteError(
+            f"{path.name}:{start_line} trägt nicht mehr {expected_id} "
+            f"(gefunden: {actual_id or 'keine ID'}) — nichts entfernt."
+        )
+    backup_path = backup(path, settings, tag="remove") if make_backup else None
+    del lines[start:end]
+    _write(path, "".join(lines), has_bom)
+    return {
+        "file": str(path), "line": start_line,
+        "backup": str(backup_path) if backup_path else None,
+    }
+
+
 def mark_decision_undone(
     settings: Settings,
     entry_id: str,
@@ -339,18 +366,9 @@ def undo_decision(
     on: str | None = None,
     make_backup: bool = True,
 ) -> dict:
-    """Einen Klick vollstaendig rueckgaengig machen: Feld + Beleg.
-
-    Reihenfolge bewusst: erst die Kette (die Quelle der Wahrheit) wieder
-    oeffnen, danach den Beleg vermerken — genau wie `decide()` erst das
-    Feld fuellt und danach den Beleg schreibt. Schlaegt der erste Schritt
-    fehl, bleibt gar nichts angefasst.
-    """
-    kette = revert_decision(
-        settings, Path(entry["source_path"]), entry["source_line"],
-        expected_id=entry["id"], make_backup=make_backup)
-    beleg = mark_decision_undone(settings, entry["id"], reason, on=on, make_backup=make_backup)
-    return {"ok": True, "id": entry["id"], "kette": kette, "beleg": beleg}
+    """Einen Clicker-Klick aus dem Vollblock-Beleg wieder aktiv machen."""
+    return restore_decision(
+        settings, entry["id"], reason, on=on, make_backup=make_backup)
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +416,11 @@ def render_entry(
     frage = single_line(frage, "Frage")
     empfehlung = single_line(empfehlung, "Empfehlung")
     scope = single_line(scope, "Scope")
+    if status.strip().upper() == "OFFEN":
+        if not frage:
+            raise WriteError("Eine aktive Entscheidung benötigt eine Frage.")
+        if not optionen or not any(option.strip() for option in optionen):
+            raise WriteError("Eine aktive Entscheidung benötigt Optionen.")
     rows: list[str] = [f"{entry_id} — {title}", "", f"STATUS: {status}"]
     if scope:
         rows.append(f"SCOPE: {scope}")
@@ -423,8 +446,9 @@ def append_entry(
     rendered: str,
     *,
     make_backup: bool = True,
+    preserve_rendered_newlines: bool = False,
 ) -> dict:
-    """Eintrag am Ende des Kettenteils anhaengen — vor einem Pointer-Block."""
+    """Eintrag am Ende des Aktivdokuments anhängen — vor einem Legacy-Pointer."""
     text, has_bom = _read(path)
     lines = text.splitlines(keepends=True)
     newline = _newline_of(lines)
@@ -450,7 +474,11 @@ def append_entry(
                 break
 
     backup_path = backup(path, settings, tag="new") if make_backup else None
-    block = rendered.replace("\r\n", "\n").replace("\n", newline)
+    block = (
+        rendered
+        if preserve_rendered_newlines
+        else rendered.replace("\r\n", "\n").replace("\n", newline)
+    )
     prefix = "" if insert_at == 0 or lines[insert_at - 1].strip() == "" else newline
     lines.insert(insert_at, prefix + block)
     _write(path, "".join(lines), has_bom)
@@ -472,12 +500,13 @@ def append_done(
     *,
     on: str | None = None,
     make_backup: bool = True,
+    original_block: str = "",
 ) -> dict:
     """Getroffene Entscheidung in `DECIDED-AND-DONE.md` protokollieren.
 
-    Der Eintrag bleibt in der aktiven Kette stehen: Nach der Kettenregel wird
-    er erst nach VERIFIZIERTER Umsetzung verschoben, und das verifiziert kein
-    Klick. Hier entsteht nur der Beleg, dass die Entscheidung gefallen ist.
+    Bei der normalen Clicker-Transaktion wird zusaetzlich der unveraenderte
+    offene Originalblock eingebettet. So kann Undo ihn spaeter verlustfrei in
+    das eine Aktivdokument zurueckstellen.
     """
     path = settings.done_file
     if not path.is_file():
@@ -494,13 +523,146 @@ def append_done(
         f"ENTSCHIEDEN AM: {stamp} ({TOOL_TAG})",
         f"ENTSCHEIDUNG: {render_decision(choice, note)}",
         f"QUELLE IN DER KETTE: `{entry['source_file']}`, Zeile {entry['source_line']}",
-        "UMSETZUNG: offen — der Eintrag bleibt bis zur verifizierten Umsetzung in der aktiven Kette.",
+        "AKTIVVORLAGE: entfernt — beantwortete Punkte sind nicht mehr aktiv.",
+        "UMSETZUNG: separat zu verfolgen; ein offener Umsetzungsstand reaktiviert die Frage nicht.",
         "",
     ]
+    if original_block:
+        encoded = base64.b64encode(original_block.encode("utf-8")).decode("ascii")
+        rows += [f"ORIGINALBLOCK-BASE64: {encoded}", ""]
     backup_path = backup(path, settings, tag="done") if make_backup else None
     tail = "" if text.endswith(("\n", "\r")) else newline
     _write(path, text + tail + newline.join(rows) + newline, has_bom)
     return {"file": str(path), "backup": str(backup_path) if backup_path else None}
+
+
+def decide_entry(
+    settings: Settings,
+    entry: dict,
+    choice: str,
+    note: str = "",
+    *,
+    on: str | None = None,
+) -> dict:
+    """Antwort protokollieren und den Vollblock sofort aus Aktiv entfernen."""
+    if entry.get("decision_ready") is not True:
+        raise WriteError(f"{entry.get('key', entry.get('id', '?'))} ist nicht entscheidungsreif aktiv.")
+    path = Path(entry["source_path"])
+    text, _has_bom = _read(path)
+    lines = text.splitlines(keepends=True)
+    start, end = entry_bounds(settings, lines, entry["source_line"])
+    original_block = "".join(lines[start:end])
+
+    filled = fill_decision(
+        settings, path, entry["source_line"], choice, note,
+        expected_id=entry["id"], on=on)
+    try:
+        record = append_done(
+            settings, entry, choice, note, on=on, original_block=original_block)
+    except Exception:
+        revert_decision(
+            settings, path, entry["source_line"], expected_id=entry["id"],
+            make_backup=False)
+        raise
+    try:
+        removed = remove_entry(
+            settings, path, entry["source_line"], expected_id=entry["id"],
+            make_backup=False)
+    except Exception:
+        revert_decision(
+            settings, path, entry["source_line"], expected_id=entry["id"],
+            make_backup=False)
+        mark_decision_undone(
+            settings, entry["id"], "Transaktion abgebrochen", on=on,
+            make_backup=False)
+        raise
+    return {
+        "ok": True, "id": entry["id"], "value": filled["value"],
+        "date": filled["date"], "file": filled["file"], "line": filled["line"],
+        "backup": filled["backup"], "record": record, "removed": removed,
+    }
+
+
+def _restorable_original_block(settings: Settings, entry_id: str) -> str:
+    """Originalblock des neuesten offenen Clicker-Belegs dieser ID."""
+    text, _has_bom = _read(settings.done_file)
+    lines = text.splitlines()
+    heads: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if match := DONE_HEADING_RE.match(line):
+            heads.append((index, match.group(1)))
+    candidate = ""
+    for pos, (start, found_id) in enumerate(heads):
+        if found_id != entry_id:
+            continue
+        end = heads[pos + 1][0] if pos + 1 < len(heads) else len(lines)
+        block = lines[start:end]
+        if not any(CLICKER_DECIDED_AT_RE.match(line) for line in block):
+            continue
+        if any(re.match(r"^ZUR[UÜ]CKGESETZT\s+AM\s*:", line, re.I) for line in block):
+            continue
+        encoded = next(
+            (match.group(1) for line in block if (match := ORIGINAL_BLOCK_RE.match(line))),
+            "",
+        )
+        if encoded:
+            try:
+                candidate = base64.b64decode(encoded, validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise WriteError(f"Beschädigter Originalblock-Beleg für {entry_id}.") from exc
+    if not candidate:
+        raise WriteError(
+            f"{entry_id} hat keinen offenen Clicker-Vollblock-Beleg — "
+            "extern entschieden, Legacy-Beleg oder bereits zurückgesetzt."
+        )
+    return candidate
+
+
+def restore_decision(
+    settings: Settings,
+    entry_id: str,
+    reason: str,
+    *,
+    on: str | None = None,
+    make_backup: bool = True,
+) -> dict:
+    """Einen archivierten Clicker-Vollblock wieder als offen aktivieren."""
+    entry_id = single_line(entry_id, "ID")
+    if not ENTRY_ID_RE.fullmatch(entry_id):
+        raise WriteError(f"Ungültige Entscheidungs-ID: {entry_id!r}")
+    tool = _load_index_tool(settings.index_script)
+    index = tool.build_index(settings.chain_dir)
+    if any(item["domain"] == "active" and item["id"] == entry_id for item in index["entries"]):
+        raise WriteError(f"{entry_id} steht bereits im Aktivdokument.")
+    original_block = _restorable_original_block(settings, entry_id)
+    first = next((line for line in original_block.splitlines() if line.strip()), "")
+    heading = tool.match_heading(first)
+    if not heading or heading[0] != entry_id:
+        raise WriteError(f"Originalblock-Beleg passt nicht zu {entry_id}.")
+
+    target = settings.chain_dir / "TO-DECIDE-USER.txt"
+    if not target.is_file():
+        raise WriteError(f"Kanonisches Aktivdokument fehlt: {target}")
+    active_backup = backup(target, settings, tag="undo") if make_backup else None
+    done_backup = backup(settings.done_file, settings, tag="undo") if make_backup else None
+    restored = append_entry(
+        settings, target, original_block, make_backup=False,
+        preserve_rendered_newlines=True)
+    try:
+        marker = mark_decision_undone(
+            settings, entry_id, reason, on=on, make_backup=False)
+    except Exception:
+        fresh = tool.build_index(settings.chain_dir)
+        active = next(
+            item for item in fresh["entries"]
+            if item["domain"] == "active" and item["id"] == entry_id)
+        remove_entry(
+            settings, target, active["source_line"], expected_id=entry_id,
+            make_backup=False)
+        raise
+    restored["backup"] = str(active_backup) if active_backup else None
+    marker["backup"] = str(done_backup) if done_backup else None
+    return {"ok": True, "id": entry_id, "kette": restored, "beleg": marker}
 
 
 def append_done_block(settings: Settings, rows: list[str], *, make_backup: bool = True) -> dict:
@@ -594,7 +756,8 @@ def foreign_locks(settings: Settings) -> list[Path]:
 
 __all__ = [
     "ChainError", "MUTATION_LOCK", "WriteError", "append_done", "append_entry", "backup",
+    "decide_entry",
     "entry_bounds", "fill_decision", "foreign_locks", "mark_decision_undone",
     "release_lock", "render_decision", "render_entry", "revert_decision",
-    "single_line", "undo_decision", "write_lock",
+    "remove_entry", "restore_decision", "single_line", "undo_decision", "write_lock",
 ]

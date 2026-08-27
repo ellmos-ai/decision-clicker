@@ -51,9 +51,9 @@ def default_onedrive_root() -> Path:
 
 DEFAULT_CHAIN = default_onedrive_root() / ".TOPICS" / "_control-center" / "_DECISIONS"
 
-# Neue Entscheidungen wandern immer in den letzten Kettenteil, solange er nicht
-# überläuft. Cut-and-Clue greift ab dieser Zeilenzahl (Regel im Kettenkopf).
-CUT_AND_CLUE_LINES = 900
+# Ab dieser Länge warnt die Oberfläche vor einer Bestandsbereinigung. Der
+# Ein-Dokument-Aktivvertrag erlaubt dennoch keinen nummerierten Folgeteil.
+ACTIVE_DOCUMENT_WARNING_LINES = 900
 
 
 @dataclass(frozen=True)

@@ -1,20 +1,13 @@
-D-20260805-001 — Existing rollout choice
+# TO-DECIDE-USER — synthetische Fixture
 
-STATUS: ENTSCHIEDEN, UMSETZUNG OFFEN
-SCOPE: global
-FRAGE: Soll der bestehende Rollout fortgeführt werden?
-OPTIONEN:
-- A — Fortführen
-- B — Pausieren
+> Einziges aktives Dokument. Es enthält ausschließlich unbeantwortete,
+> entscheidungsreife Beispiele ohne reale Entscheidungsdaten.
 
-ENTSCHEIDUNG DES USERS: [A]
-
----
-
-D-20260806-001 — Parser compatibility
+## D-20260806-001 — Parser compatibility
 
 STATUS: OFFEN
 SCOPE: global
+QUELLE: Synthetische Fixture.
 KONTEXT:
 Dieser neutrale Eintrag prüft den regulären Kettenpfad.
 
@@ -27,6 +20,33 @@ OPTIONEN:
 
 EMPFEHLUNG: A — kompatibel bleiben.
 
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+D-20260807-001 — First open sample
+
+STATUS: OFFEN
+QUELLE: Synthetische Fixture.
+FRAGE: Welche Variante soll verwendet werden?
+OPTIONEN:
+- A — Erste Variante
+- B — Zweite Variante
+EMPFEHLUNG: A — kleinster synthetischer Pfad.
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+=== D-20260807-002 | Framed open sample ===
+
+STATUS: OFFEN
+SCOPE: global
+QUELLE: Synthetische Fixture.
+FRAGE: Soll die umrahmte Überschrift erkannt werden?
+OPTIONEN:
+Option A: jetzt
+Option B: später
+EMPFEHLUNG: A — Parserkompatibilität.
 ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
 
 ---

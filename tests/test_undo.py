@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
-"""Rueckgaengig-Machen: die genaue Umkehrung von `fill_decision` + `append_done`.
+"""Rückgängig-Machen im Ein-Dokument-Aktivvertrag.
 
-Kernkriterium (Auftrag OP-CLICKER-UNDO): ein Roundtrip decide -> undo muss die
-Kette byte-identisch zum Zustand VOR dem decide zuruecklassen — abzueglich des
-gewollten append-only-Vermerks in DECIDED-AND-DONE.md, der bewusst stehen
-bleibt (Beleg wird nie geloescht).
+Der Clicker entfernt beantwortete Vollblöcke sofort aus Aktiv. Undo stellt den
+gesicherten Originalblock bytegetreu wieder ein und ergänzt den historischen
+Beleg append-only; die frühere Position im Gesamtdokument ist nicht Teil des
+Vertrags.
 """
 from __future__ import annotations
 
@@ -38,23 +38,29 @@ def test_undo_stellt_die_kette_byte_identisch_wieder_her(kette: Settings, origin
     assert pfad.read_bytes() == vorher, "Undo muss die Kettendatei byte-identisch zurücklassen"
 
 
-def test_undo_ueber_die_fassade_ist_wieder_offen(kette: Settings, original_bytes):
+def test_undo_ueber_die_fassade_ist_wieder_offen(kette: Settings):
     """`decide()` -> `undo()`: die ID gilt danach wieder als offen, nicht als entschieden."""
     clicker = DecisionClicker(kette.chain_dir)
     eintrag = _offene(kette)[0]
+    original_block = clicker.raw_text(eintrag)
     pfad = Path(eintrag["source_path"])
-    vorher = original_bytes[pfad.name]
+    original_text, _ = writer._read(pfad)
+    lines = original_text.splitlines(keepends=True)
+    start, end = writer.entry_bounds(kette, lines, eintrag["source_line"])
+    original_block_bytes = "".join(lines[start:end]).encode("utf-8")
 
     clicker.decide(eintrag["key"], "A", "Notiz")
     zwischenstand = chain.find(chain.build_index(kette), eintrag["key"])
-    assert zwischenstand["status_class"] == chain.STATUS_PENDING
+    assert zwischenstand is None
 
     clicker.undo(eintrag["key"])
 
     danach = chain.find(chain.build_index(kette), eintrag["key"])
     assert danach["status_class"] == chain.STATUS_OPEN
     assert danach["key"] in [e["key"] for e in _offene(kette)]
-    assert pfad.read_bytes() == vorher
+    assert clicker.raw_text(danach) == original_block
+    assert original_block_bytes in pfad.read_bytes()
+    assert chain.build_index(kette)["active_contract"]["valid"] is True
 
 
 def test_undo_loescht_den_beleg_nicht_sondern_vermerkt_ihn(kette: Settings):

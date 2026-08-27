@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 """decisions_index.py — Index ueber die zentrale Entscheidungskette (_DECISIONS).
 
-Liest die gesamte TO-DECIDE-Kette read-only und erzeugt zwei abgeleitete Artefakte:
+Liest das eine kanonische aktive Entscheidungsdokument read-only und erzeugt
+zwei abgeleitete Artefakte:
 
   decisions.index.json   maschinenlesbar (Schema "decisions.index/1")
   INDEX-REPORT.md        kompakter Lesebericht, echt offene Eintraege zuerst
@@ -13,6 +14,8 @@ Verbindliche Eigenschaften:
   sein Ausgabeverzeichnis (Default: dieser Ordner). Keine Quelldatei wird
   veraendert, keine ID umnummeriert.
 * **Idempotent.** Gleicher Input => gleicher Output (bis auf `generated_at`).
+* **Aktivvertrag.** Ausschliesslich ``TO-DECIDE-USER.txt`` ist aktiv. Dort
+  duerfen nur unbeantwortete, entscheidungsreife Eintraege stehen.
 * **ID-Kollisionen werden gemeldet, nicht repariert.** IDs koennen anderswo
   referenziert sein; eine Umnummerierung durch ein Werkzeug waere ein
   stiller Bruch. Kollidierende Eintraege bleiben ueber `key` (`<ID>#a`, `#b`, …)
@@ -32,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.3.0"
 SCHEMA = "decisions.index/1"
 GENERATOR = f"decisions_index.py {VERSION}"
 
@@ -40,9 +43,13 @@ DEFAULT_ROOT = Path.cwd()
 
 # Reihenfolge ist bedeutsam: die aktive Kette wird ZUERST gescannt, damit bei
 # ID-Kollisionen die aktiven Eintraege die vorderen Suffixe (#a, #b) erhalten.
-ACTIVE_GLOBS = ("TO-DECIDE-USER.txt", "TO-DECIDE-USER_*.txt", "TO-DECIDE-USER-*.txt")
+#
+# Die Dateinamen werden weiter unten bewusst mit exakten Mustern erkannt. Ein
+# weiter Glob wie ``TO-DECIDE-USER_*.txt`` nimmt sonst OneDrive-Konfliktkopien
+# wie ``TO-DECIDE-USER_4-WORKSTATION-LG.txt`` als aktive Kettenteile auf.
 DONE_NAME = "DECIDED-AND-DONE.md"
 ARCHIVE_DIR = "_decision-archive"
+ACTIVE_NAME = "TO-DECIDE-USER.txt"
 
 STATUS_OPEN = "OFFEN"
 STATUS_DECIDED_PENDING = "ENTSCHIEDEN_UMSETZUNG_OFFEN"
@@ -61,7 +68,10 @@ ENTRY_RE = re.compile(
     rf"^(?:(?P<hashes>#{{1,4}})\s+)?(?P<id>{_ID})\s*"
     rf"(?:[\u2014\u2013]|--|-)?\s*(?P<title>.*?)\s*$"
 )
+LEGACY_ID_RE = re.compile(rf"^ID\s*:\s*(?P<id>{_ID})\s*$", re.I)
+LEGACY_TITLE_RE = re.compile(r"^TITEL\s*:\s*(?P<title>.*?)\s*$", re.I)
 ID_ONLY_RE = re.compile(rf"^{_ID}$")
+ID_TOKEN_RE = re.compile(rf"\b({_ID})\b")
 
 # Feldzeilen. Gross-/Kleinschreibung variiert zwischen den Kettenteilen.
 FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -151,6 +161,18 @@ class Entry:
             return STATUS_DONE
         return STATUS_DECIDED_PENDING if self.has_decision else STATUS_OPEN
 
+    @property
+    def decision_ready(self) -> bool:
+        """Nur vollstaendige, unbeantwortete Eintraege im Aktivdokument."""
+        return (
+            self.domain == "active"
+            and not self.has_decision
+            and not self.is_alias
+            and bool(self.fields.get("frage", "").strip())
+            and bool(self.fields.get("optionen", "").strip())
+            and "entscheidung" in self.fields
+        )
+
     def scope(self) -> tuple[str, bool]:
         explicit = self.fields.get("scope", "").strip()
         if explicit:
@@ -180,6 +202,7 @@ class Entry:
             "scope": scope,
             "scope_explicit": scope_explicit,
             "decision_field_raw": excerpt(self.decision_raw),
+            "decision_ready": self.decision_ready,
             "options_excerpt": excerpt(self.fields.get("optionen", "")),
             "recommendation_excerpt": excerpt(self.fields.get("empfehlung", "")),
             "source_excerpt": excerpt(self.fields.get("quelle", ""), 200),
@@ -245,12 +268,18 @@ def match_heading(line: str) -> tuple[str, str] | None:
     """(id, titel) fuer eine Eintrags-Ueberschrift, sonst None."""
     if line[:1].isspace() or line.startswith("-") or line.startswith("*"):
         return None
-    match = ENTRY_RE.match(line.rstrip())
+    candidate = line.rstrip()
+    if candidate.startswith("="):
+        candidate = re.sub(r"^=+\s*|\s*=+$", "", candidate)
+    match = ENTRY_RE.match(candidate)
     if not match:
+        legacy = LEGACY_ID_RE.fullmatch(candidate)
+        return (legacy.group("id"), "") if legacy else None
+    if not match.group("hashes") and not candidate.startswith("D-"):
         return None
-    if not match.group("hashes") and not line.startswith("D-"):
-        return None
-    return match.group("id"), (match.group("title") or "").strip()
+    title = (match.group("title") or "").strip()
+    title = re.sub(r"^\|\s*", "", title)
+    return match.group("id"), title
 
 
 def parse_fields(body: list[str]) -> dict[str, str]:
@@ -309,6 +338,12 @@ def parse_file(path: Path, domain: str) -> list[Entry]:
         end = heads[index + 1][0] - 1 if index + 1 < len(heads) else len(lines)
         body = lines[number:end]
         raw = "\n".join(lines[number - 1:end])
+        if not title:
+            title = next(
+                (hit.group("title").strip() for line in body
+                 if (hit := LEGACY_TITLE_RE.match(line))),
+                "",
+            )
         entries.append(Entry(
             entry_id=entry_id,
             title=title or "(ohne Titel)",
@@ -322,7 +357,7 @@ def parse_file(path: Path, domain: str) -> list[Entry]:
 
 
 def collect_sources(root: Path) -> list[tuple[Path, str]]:
-    """Quelldateien in fester Reihenfolge: aktive Kette, DONE, Archiv."""
+    """Quellen in fester Reihenfolge: EIN Aktivdokument, DONE, Archiv."""
     sources: list[tuple[Path, str]] = []
     seen: set[Path] = set()
 
@@ -331,9 +366,7 @@ def collect_sources(root: Path) -> list[tuple[Path, str]]:
             seen.add(path)
             sources.append((path, domain))
 
-    for pattern in ACTIVE_GLOBS:
-        for path in sorted(root.glob(pattern)):
-            add(path, "active")
+    add(root / ACTIVE_NAME, "active")
     add(root / DONE_NAME, "done")
     archive = root / ARCHIVE_DIR
     if archive.is_dir():
@@ -341,6 +374,40 @@ def collect_sources(root: Path) -> list[tuple[Path, str]]:
             if path.suffix.lower() in (".txt", ".md"):
                 add(path, "archive")
     return sources
+
+
+def ignored_active_candidates(root: Path) -> list[Path]:
+    """Nichtkanonische TO-DECIDE-Dateien melden, aber nie aktiv einlesen.
+
+    Die Dateien bleiben sichtbar, damit eine notwendige verlustfreie
+    Reconciliation nicht durch stilles Ignorieren ersetzt wird.
+    """
+    return [
+        path
+        for path in sorted(root.iterdir())
+        if path.is_file()
+        and path.suffix.lower() == ".txt"
+        and path.name.upper().startswith("TO-DECIDE-USER")
+        and path.name != ACTIVE_NAME
+    ]
+
+
+def reserved_archive_ids(root: Path) -> list[str]:
+    """Alle im Archiv vorkommenden D-IDs konservativ reservieren.
+
+    Das eigentliche Index-Payload bleibt kompakt und liest nur die bisherigen
+    direkten Archivquellen. Fuer die globale ID-Vergabe werden aber auch
+    verschachtelte Vollstaende, Hashmanifeste und Backups beruecksichtigt.
+    Eine blosse Referenz reserviert eine ID lieber zu viel als zu wenig.
+    """
+    archive = root / ARCHIVE_DIR
+    if not archive.is_dir():
+        return []
+    found: set[str] = set()
+    for path in archive.rglob("*"):
+        if path.is_file() and path.suffix.lower() in (".txt", ".md", ".json"):
+            found.update(ID_TOKEN_RE.findall(read_text(path)))
+    return sorted(found)
 
 
 def assign_keys(entries: list[Entry]) -> list[dict]:
@@ -415,20 +482,53 @@ def build_index(root: Path) -> dict:
 
     active_ids = {e.entry_id for e in entries if e.domain == "active"}
     archived_ids = {e.entry_id for e in entries if e.domain != "active"}
+    reserved_ids = reserved_archive_ids(root)
 
+    ignored = ignored_active_candidates(root)
+    active_entries = [item for item in payload if item["domain"] == "active"]
+    contract_errors: list[str] = []
+    if not (root / ACTIVE_NAME).is_file():
+        contract_errors.append(f"Kanonisches Aktivdokument fehlt: {ACTIVE_NAME}")
+    if ignored:
+        contract_errors.append(
+            "Nichtkanonische TO-DECIDE-Dateien im Wurzelordner: "
+            + ", ".join(path.name for path in ignored)
+        )
+    if collisions:
+        contract_errors.append(
+            "ID-Kollisionen im Aktivdokument: "
+            + ", ".join(item["id"] for item in collisions)
+        )
+    for item in active_entries:
+        if not item["decision_ready"]:
+            contract_errors.append(
+                f"Nicht entscheidungsreifer Aktiveintrag: {item['id']} "
+                f"({item['source_file']}:{item['source_line']})"
+            )
     return {
         "schema": SCHEMA,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "generator": GENERATOR,
         "root": str(root),
         "files": files,
+        "ignored_active_candidates": [relname(path, root) for path in ignored],
+        "active_contract": {
+            "canonical_file": ACTIVE_NAME,
+            "valid": not contract_errors,
+            "errors": contract_errors,
+        },
+        "reserved_ids": reserved_ids,
         "counts": {
             "total": len(payload),
             "active_chain": sum(1 for e in entries if e.domain == "active"),
             "by_status_class": by_status,
             "by_scope": dict(sorted(by_scope.items())),
             "id_collisions": len(collisions),
-            "ids_in_active_and_history": len(active_ids & archived_ids),
+            "ids_in_active_and_history": len(active_ids & (archived_ids | set(reserved_ids))),
+            "reserved_archive_ids": len(reserved_ids),
+            "ignored_active_candidates": len(ignored),
+            "active_decision_ready": sum(1 for item in active_entries if item["decision_ready"]),
+            "active_contract_errors": len(contract_errors),
         },
         "collisions": collisions,
         "entries": payload,
@@ -438,14 +538,15 @@ def build_index(root: Path) -> dict:
 def render_report(index: dict) -> str:
     counts = index["counts"]
     entries = index["entries"]
-    open_entries = [e for e in entries if e["status_class"] == STATUS_OPEN]
+    open_entries = [e for e in entries if e.get("decision_ready")]
     pending = [e for e in entries if e["status_class"] == STATUS_DECIDED_PENDING]
 
     lines = [
         "# INDEX-REPORT — Entscheidungskette",
         "",
         "> Auto-generiert von `decisions_index.py` — **nicht von Hand pflegen**.",
-        "> Kanonisch bleiben die `TO-DECIDE-USER*.txt` und `DECIDED-AND-DONE.md`.",
+        "> Aktiv ist ausschliesslich `TO-DECIDE-USER.txt`; beantwortete Punkte",
+        "> stehen nur noch in `DECIDED-AND-DONE.md` oder im reversiblen Archiv.",
         "",
         f"Stand: {index['generated_at']} · Generator: {index['generator']}",
         "",
@@ -459,8 +560,34 @@ def render_report(index: dict) -> str:
         f"| {STATUS_ARCHIVED} | {counts['by_status_class'][STATUS_ARCHIVED]} |",
         f"| **gesamt** | **{counts['total']}** |",
         "",
-        f"Aktive Kette: {counts['active_chain']} Eintraege · "
+        f"Aktives Dokument: {counts['active_chain']} entscheidungsreife Eintraege · "
         f"ID-Kollisionen (aktive Kette): {counts['id_collisions']}",
+        "",
+        "## Aktivvertrag",
+        "",
+        ("**GÜLTIG** — genau ein aktives Dokument, nur unbeantwortete und "
+         "entscheidungsreife Einträge."
+         if index["active_contract"]["valid"] else "**UNGÜLTIG**"),
+        "",
+    ]
+    if not index["active_contract"]["valid"]:
+        lines.extend(f"- {error}" for error in index["active_contract"]["errors"])
+        lines.append("")
+    lines += [
+        "## Nichtkanonische Aktivkandidaten",
+        "",
+    ]
+    ignored = index.get("ignored_active_candidates", [])
+    if ignored:
+        lines.append(
+            "Diese Dateien verletzen den Ein-Dokument-Vertrag und wurden deshalb "
+            "**nicht** als aktiv eingelesen:"
+        )
+        lines.append("")
+        lines.extend(f"- `{name}`" for name in ignored)
+    else:
+        lines.append("_Keine._")
+    lines += [
         "",
         "## Echt offen — hier fehlt eine Nutzerentscheidung",
         "",
@@ -486,7 +613,7 @@ def render_report(index: dict) -> str:
             lines.append(f"- Empfehlung: {item['recommendation_excerpt']}")
         lines.append("")
 
-    lines += ["## Entschieden, Umsetzung offen", ""]
+    lines += ["## Historisch entschieden, Umsetzung offen", ""]
     if not pending:
         lines.append("_Keine._")
     for item in pending:
@@ -558,7 +685,8 @@ def main(argv: list[str] | None = None) -> int:
           f"done: {counts['by_status_class'][STATUS_DONE]} · "
           f"archiviert: {counts['by_status_class'][STATUS_ARCHIVED]}")
     print(f"  ID-Kollisionen in der aktiven Kette: {counts['id_collisions']}")
-    return 0
+    print(f"  Aktivvertrag: {'gueltig' if index['active_contract']['valid'] else 'UNGUELTIG'}")
+    return 0 if index["active_contract"]["valid"] else 1
 
 
 if __name__ == "__main__":  # pragma: no cover

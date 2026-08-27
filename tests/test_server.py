@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from decision_clicker import chain, writer
+from decision_clicker.api import DecisionClicker
 from decision_clicker.config import Settings
 from decision_clicker.server import Handler, RequestRejected, _safe_redirect_target, serve
 
@@ -117,12 +118,19 @@ def test_klick_zeigt_genau_eine_entscheidung_mit_kontext(server):
     assert 'name="note"' in seite
 
 
-def test_durchklicken_schreibt_in_die_kette(server):
-    """Der vollstaendige Weg: POST -> Feld gefuellt, Sicherung da, Beleg da."""
+def test_durchklicken_entfernt_aus_aktiv_und_schreibt_den_beleg(server):
+    """POST sichert den Vollblock, belegt den Klick und räumt Aktiv sofort auf."""
     url, kette = server
     ziel = chain.open_entries(chain.build_index(kette))[0]
     pfad = Path(ziel["source_path"])
     vorher = pfad.read_bytes()
+    source_text, has_bom = writer._read(pfad)
+    source_lines = source_text.splitlines(keepends=True)
+    start, end = writer.entry_bounds(kette, source_lines, ziel["source_line"])
+    del source_lines[start:end]
+    erwartet = "".join(source_lines).encode("utf-8")
+    if has_bom:
+        erwartet = b"\xef\xbb\xbf" + erwartet
 
     status, seite = sende(f"{url}/api/decide",
                           {"key": ziel["key"], "choice": "B", "note": "über HTTP geprüft"})
@@ -131,16 +139,20 @@ def test_durchklicken_schreibt_in_die_kette(server):
     assert ziel["id"] in seite
 
     text = pfad.read_text(encoding="utf-8-sig")
-    assert "[B — über HTTP geprüft]" in text
-    assert "ENTSCHIEDEN AM:" in text
+    assert ziel["id"] not in text
+    assert pfad.read_bytes() == erwartet, "Unbeteiligte Bytes dürfen sich nicht ändern"
 
     sicherungen = list(kette.backup_dir.glob(f"{pfad.stem}_decide_*{pfad.suffix}"))
     assert sicherungen, "Keine Sicherung angelegt"
     assert any(s.read_bytes() == vorher for s in sicherungen)
 
-    assert ziel["id"] in kette.done_file.read_text(encoding="utf-8-sig")
+    done = kette.done_file.read_text(encoding="utf-8-sig")
+    assert ziel["id"] in done
+    assert "[B — über HTTP geprüft]" in done
+    assert "ORIGINALBLOCK-BASE64:" in done
     danach = chain.find(chain.build_index(kette), ziel["key"])
-    assert danach["status_class"] == chain.STATUS_PENDING
+    assert danach is None
+    assert chain.build_index(kette)["active_contract"]["valid"] is True
 
 
 def test_klick_zeigt_deutliche_bestaetigung_statt_stiller_weiterleitung(server):
@@ -213,7 +225,8 @@ def test_same_origin_formular_darf_schreiben(server):
     url, kette = server
     vorher = chain.counts(chain.build_index(kette))["gesamt"]
     status, _ = sende(
-        f"{url}/api/new", {"title": "Gleicher Ursprung"},
+        f"{url}/api/new", {"title": "Gleicher Ursprung", "frage": "Test?",
+                           "optionen": "A — ja\nB — nein"},
         {"Origin": url, "Sec-Fetch-Site": "same-origin"},
     )
     assert status == 200
@@ -251,7 +264,9 @@ def test_parallele_http_anlage_vergibt_eindeutige_ids(server, monkeypatch):
     monkeypatch.setattr(chain, "next_id", verlangsamt)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(
-            lambda title: sende_json(f"{url}/api/new", {"title": title}),
+            lambda title: sende_json(f"{url}/api/new", {
+                "title": title, "frage": "Welche Variante?",
+                "optionen": ["A — eins", "B — zwei"]}),
             ("Parallel eins", "Parallel zwei"),
         ))
     assert [status for status, _ in results] == [200, 200]
@@ -341,6 +356,7 @@ def test_lange_optionslisten_werden_vollstaendig_angeboten(server):
     lang = "x" * 260
     sende(f"{url}/api/new", {
         "title": "Sehr ausfuehrliche Optionen",
+        "frage": "Welche Option gilt?",
         "optionen": f"A — {lang}\nB — {lang}\nC — kurz und wichtig"})
     index = chain.build_index(kette)
     eintrag = [e for e in chain.open_entries(index)
@@ -423,15 +439,15 @@ def test_undo_setzt_die_entscheidung_ueber_http_zurueck(server):
 
     sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "B", "note": "wird rueckgaengig"})
     zwischenstand = chain.find(chain.build_index(kette), ziel["key"])
-    assert zwischenstand["status_class"] == chain.STATUS_PENDING
+    assert zwischenstand is None
 
     status, seite = sende(f"{url}/api/undo/{ziel['key']}", {})
     assert status == 200
     assert ziel["id"] in seite  # landet auf /klick?key=... mit derselben ID
 
-    assert pfad.read_bytes() == vorher, "Kette muss byte-identisch zum Vorzustand sein"
     danach = chain.find(chain.build_index(kette), ziel["key"])
     assert danach["status_class"] == chain.STATUS_OPEN
+    assert DecisionClicker(kette.chain_dir).raw_text(danach).encode("utf-8") in vorher
 
     _status, verlauf_seite = hole(f"{url}/verlauf")
     assert "zurückgesetzt" in verlauf_seite
