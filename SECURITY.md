@@ -32,7 +32,7 @@ We commit to an initial response acknowledging receipt within **48 hours** and a
 Decision Clicker is a local-first administrative UI and CLI tool:
 1. **Loopback-Only Binding:** The integrated HTTP mini-server strictly binds to `127.0.0.1` or `localhost`. It enforces no remote authentication because it is designed strictly for local operator use. Never expose port `8096` to public networks, LANs, containers, or unsecured reverse proxies.
 2. **Host & Origin Validation:** All mutating HTTP requests (`POST /api/decide`, `POST /api/undo/...`) enforce exact matching of the local `Host` header and browser `Origin`. Cross-site Fetch Metadata is rejected.
-3. **Local JSON Protection:** Programmatic JSON requests require the custom header `X-Decision-Clicker: 1`.
+3. **Human-UI Boundary (least authority):** `/api/new` is the only JSON write path and may only submit *open proposals*; it requires the custom header `X-Decision-Clicker: 1`. `/api/decide`, `/api/intake` and `/api/undo/*` reject JSON even with that header and require an explicit action in the HTML UI, carrying a five-minute, single-use confirmation bound to server instance, action and record. Changing a request's content type therefore does not cross the boundary. The Python facade split (`ProposalSubmitter` vs `DecisionClicker`) is a least-authority integration contract, not a sandbox for code that already has unrestricted imports and filesystem access.
 4. **Non-Elevation / RunAsInvoker:** Decision Clicker executes entirely in user space without requiring root or administrative privileges.
 
 ### Core Security & Data Integrity Invariants
@@ -74,7 +74,7 @@ Wir garantieren eine Eingangsbestätigung innerhalb von **48 Stunden** sowie ein
 Decision Clicker ist ein lokales Administrationswerkzeug:
 1. **Strikte Loopback-Bindung:** Der integrierte HTTP-Miniserver bindet ausschließlich an `127.0.0.1` oder `localhost`. Der Port darf niemals im LAN, WAN, Container-Netzwerk oder über ungeschützte Reverse-Proxys exponiert werden.
 2. **Host- & Origin-Validierung:** Alle mutierenden HTTP-Endpunkte prüfen strikt übereinstimmende lokale `Host`- und `Origin`-Header. Cross-Origin Fetch-Metadaten werden abgewiesen.
-3. **Automationsschutz:** Programmatische JSON-Anfragen erfordern den Header `X-Decision-Clicker: 1`.
+3. **Grenze zur menschlichen Oberfläche (geringste Autorität):** `/api/new` ist der einzige JSON-Schreibweg und darf nur *offene Vorschläge* einstellen; er verlangt den Header `X-Decision-Clicker: 1`. `/api/decide`, `/api/intake` und `/api/undo/*` weisen JSON auch mit diesem Header ab und verlangen eine ausdrückliche Aktion in der HTML-Oberfläche mit einer fünf Minuten gültigen, einmal verwendbaren Bestätigung, die an Serverinstanz, Aktion und Eintrag gebunden ist. Ein Wechsel des Content-Type überschreitet die Grenze daher nicht. Die Trennung der Python-Fassaden (`ProposalSubmitter` gegenüber `DecisionClicker`) ist ein Integrationsvertrag geringster Autorität, keine Sandbox für Code, der ohnehin uneingeschränkt importieren und auf das Dateisystem zugreifen kann.
 4. **Unprivilegierter Betrieb (RunAsInvoker):** Das Tool erfordert keinerlei Administrator- oder Root-Rechte.
 
 ### Sicherheits- und Datenintegritäts-Invarianten

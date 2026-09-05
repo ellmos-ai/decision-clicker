@@ -168,3 +168,38 @@ def test_register_dedupliziert_ueber_beide_fundstellen(postfach: Path, kette: Se
     assert len(treffer) == 1, "ID doppelt im Register"
     assert len(treffer[0]["fundstellen"]) >= 2, treffer[0]["fundstellen"]
     assert any("Desktop" in f for f in treffer[0]["fundstellen"])
+
+
+def test_optionale_evidenzfelder_werden_synthetisch_geparst_und_uebernommen(
+    tmp_path: Path, monkeypatch, kette: Settings
+):
+    quelle = tmp_path / "synthetisches_postfach.txt"
+    fingerprint = "sha256:" + "b" * 64
+    quelle.write_text(
+        "D-20991231-901 — Evidenzschema\n\n"
+        "FRAGE: Welche Variante?\n\n"
+        "OPTIONEN:\n- A — x\n- B — y\n\n"
+        "EVIDENZANKER: urn:test:1 | docs/synth.md#abschnitt\n"
+        "GEGENBELEGE: urn:test:counter\n"
+        "FEHLENDE INFORMATIONEN: synthetische Freigabe\n"
+        "ERSTELLT VON: test-suite\n"
+        f"KONTEXT-FINGERPRINT: {fingerprint.upper()}\n\n"
+        "ENTSCHEIDUNG DES USERS: [OFFEN]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(intake, "DEFAULT_SOURCES", (quelle,))
+
+    parsed = intake.parse(quelle)[0]
+    assert parsed.fields["EVIDENZANKER"] == "urn:test:1 | docs/synth.md#abschnitt"
+    intake.takeover(kette, on="2026-09-05")
+    raw = next(
+        path.read_text(encoding="utf-8-sig")
+        for path in kette.chain_dir.glob("TO-DECIDE-USER*.txt")
+        if parsed.entry_id in path.read_text(encoding="utf-8-sig")
+    )
+    assert "EVIDENZANKER: urn:test:1 | docs/synth.md#abschnitt" in raw
+    assert "GEGENBELEGE: urn:test:counter" in raw
+    assert "FEHLENDE INFORMATIONEN: synthetische Freigabe" in raw
+    assert "ERSTELLT VON: test-suite" in raw
+    assert f"KONTEXT-FINGERPRINT: {fingerprint}" in raw
+    assert "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]" in raw

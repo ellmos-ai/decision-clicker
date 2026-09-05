@@ -233,6 +233,8 @@ def quote(text: str) -> list[str]:
 
 def render_takeover(entry: IntakeEntry, *, on: str | None = None, newline: str = "\r\n") -> str:
     """Postfach-Eintrag in Kettenkonvention gießen — Wortlaut bleibt erhalten."""
+    from . import writer  # spät: intake bleibt die untere Schicht
+
     stamp = on or datetime.now().strftime("%Y-%m-%d")
     herkunft = (f"`%OneDrive%\\Desktop\\{entry.path.name}` (Desktop-Intake), "
                 f"übernommen am {stamp} durch decision-clicker.")
@@ -252,6 +254,19 @@ def render_takeover(entry: IntakeEntry, *, on: str | None = None, newline: str =
         rows += ["", f"EMPFEHLUNG: {entry.empfehlung}"]
     if beleg := entry.fields.get("BELEG"):
         rows += ["", f"BELEG: {beleg}"]
+    for name in (
+        "EVIDENZANKER", "GEGENBELEGE", "FEHLENDE INFORMATIONEN",
+        "ERSTELLT VON", "KONTEXT-FINGERPRINT",
+    ):
+        if value := entry.fields.get(name):
+            value = writer.single_line(value, name)
+            if name == "KONTEXT-FINGERPRINT":
+                value = value.lower()
+                if not writer.CONTEXT_FINGERPRINT_RE.fullmatch(value):
+                    raise writer.WriteError(
+                        "Kontext-Fingerprint muss sha256: gefolgt von 64 Hex-Zeichen sein."
+                    )
+            rows += ["", f"{name}: {value}"]
     rows += ["", "ORIGINALWORTLAUT AUS DEM DESKTOP-POSTFACH (unverändert, nur zitiert):"]
     rows += quote(entry.raw)
     rows += ["", "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]", "", "---", ""]

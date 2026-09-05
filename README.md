@@ -305,18 +305,37 @@ The mini-server operates on `http://127.0.0.1:8096`:
 | `/verlauf` | `GET` | Audit trail and history of decided items | None |
 | `/neu` | `GET`, `POST` | Decision creation form | Host & Origin check |
 | `/api/index` | `GET` | Machine-readable JSON index of the decision chain | None |
-| `/api/decide` | `POST` | Record a decision choice | `X-Decision-Clicker: 1` or Origin |
-| `/api/undo/<key>` | `POST` | Reversibly undo a previously recorded decision | `X-Decision-Clicker: 1` or Origin |
-| `/api/takeover` | `POST` | Trigger legacy inbox intake | `X-Decision-Clicker: 1` or Origin |
+| `/api/new` | `POST` | Submit an **open proposal** (the only JSON write path) | `X-Decision-Clicker: 1` + Host & Origin |
+| `/api/decide` | `POST` | Record a decision choice | Human HTML UI only — JSON rejected; single-use confirmation |
+| `/api/intake` | `POST` | Trigger legacy inbox intake | Human HTML UI only — JSON rejected; single-use confirmation |
+| `/api/undo/<key>` | `POST` | Reversibly undo a previously recorded decision | Human HTML UI only — JSON rejected; single-use confirmation |
 
-Programmatic local automation example:
+`/api/decide`, `/api/intake` and `/api/undo/*` reject `Content-Type:
+application/json` even with the guard header — they require an explicit action
+in the HTML UI. Those forms carry a five-minute, single-use confirmation bound
+to server instance, action and record, so merely changing a request's content
+type does not cross the human-UI boundary.
+
+Programmatic local automation may therefore only **propose**:
 
 ```bash
-curl -X POST http://127.0.0.1:8096/api/decide \
+curl -X POST http://127.0.0.1:8096/api/new \
   -H "Content-Type: application/json" \
   -H "X-Decision-Clicker: 1" \
-  -d '{"key": "D-20260909-01", "choice": "B", "note": "Approved via automated agent"}'
+  -d '{"frage": "Ship 1.2.0?", "optionen": ["A: yes", "B: wait"]}'
 ```
+
+A submitted candidate is always rendered as `STATUS: OFFEN` with an unanswered
+user field; supplied `status`, `decision` or `implemented` properties have no
+effect. AI, memory and policy adapters receive
+`decision_clicker.api.ProposalSubmitter`, not the human `DecisionClicker`
+mutation facade.
+
+Optional evidence metadata uses these single-line fields: `EVIDENZANKER`,
+`GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` and
+`KONTEXT-FINGERPRINT`. Multiple values are joined with ` | `; a fingerprint has
+the form `sha256:` plus 64 hex characters. They improve provenance lookup but
+never certify truth.
 
 ---
 

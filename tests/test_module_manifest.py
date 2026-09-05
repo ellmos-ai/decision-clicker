@@ -27,6 +27,7 @@ def test_manifest_exposes_fixed_decision_bundle_capability():
     """Die Registry kann den Clicker als festen Bundle-Baustein verlangen."""
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     assert "decision.clicker" in data["provides"]
+    assert "decisions.propose" in data["provides"]
     assert "policy.registry" in data["optional"]
     assert "policy.registry" not in data["requires"]
     seams = [a for a in data["adapters"] if a.get("target") == "policy-registry"]

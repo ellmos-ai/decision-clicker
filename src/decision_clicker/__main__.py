@@ -75,6 +75,10 @@ def cmd_add(args: argparse.Namespace) -> int:
             entry_id, args.title, quelle=args.quelle or "", frage=args.frage or "",
             optionen=args.option or [], empfehlung=args.empfehlung or "",
             kontext=args.kontext or "", scope=args.scope or "",
+            evidenzanker=args.evidenzanker or [], gegenbelege=args.gegenbeleg or [],
+            fehlende_informationen=args.fehlende_information or [],
+            erstellt_von=args.erstellt_von or "",
+            kontext_fingerprint=args.kontext_fingerprint or "",
         )
         if args.dry_run:
             print(rendered)
@@ -131,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     p_add.add_argument("--kontext")
     p_add.add_argument("--quelle")
     p_add.add_argument("--scope", help="global | host:<name> | projekt:<pfad>")
+    p_add.add_argument("--evidenzanker", action="append", help="stabiler Fundstellenanker; mehrfach angebbar")
+    p_add.add_argument("--gegenbeleg", action="append", help="Gegenbeleg; mehrfach angebbar")
+    p_add.add_argument("--fehlende-information", action="append", help="offene Evidenzlücke; mehrfach angebbar")
+    p_add.add_argument("--erstellt-von", help="Ersteller oder erzeugender Adapter")
+    p_add.add_argument("--kontext-fingerprint", help="sha256:<64 Hex-Zeichen>")
     p_add.add_argument("--json", action="store_true", help="Ergebnis als JSON")
     p_add.add_argument("--dry-run", action="store_true", help="nur zeigen")
     _gemeinsam(p_add)

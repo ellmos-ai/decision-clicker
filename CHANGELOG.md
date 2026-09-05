@@ -58,6 +58,29 @@ All notable changes to this project are documented here. The format follows
   multi-agent concurrency locks, and packaging caches.
 - Standardize `pyproject.toml` with PEP 621 ecosystem URLs, OS classifiers, and pytest `addopts = "-ra -v"`.
 - Normalize newline assertion in `tests/test_server.py` for cross-platform CRLF/LF resilience.
+- Task #352: separate candidate and human mutation boundaries. AI, memory, and
+  policy integrations receive a proposal-only facade; JSON decisions, intake,
+  and undo are rejected while human confirmation and provenance-gated undo stay
+  available in the HTML UI.
+- Task #353: restrict source distributions to approved synthetic fixtures and
+  explicitly exclude the local real-data inbox audit file. The `PRIVATE.txt`
+  publication gate remains closed.
+- Task #349: add optional evidence anchors, counterevidence, missing-information,
+  creator, and SHA-256 context-fingerprint fields without treating them as
+  truth assertions.
+
+### Added
+
+- `ellmos-module.v2.json`: originally registered decision-clicker as an
+  optional structural sub-module of `policy-registry` (ticket
+  T-20260824-474639761, user decision 2026-08-24, F2). The 2026-08-27 user
+  decision supersedes only the optional composition status; the historical
+  data-level seam remains documented.
+  Both tools point at the same on-disk `_DECISIONS` chain -- the coupling is
+  data-level, not a code dependency in either direction.
+- `tests/test_module_manifest.py`: contract test for the manifest (JSON
+  validity, private-visibility gate while `PRIVATE.txt` exists, optional-not-
+  required seam, version parity with `pyproject.toml`).
 
 ## [1.0.1] - 2026-08-21
 

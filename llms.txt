@@ -44,6 +44,9 @@
 - **INV-LOCK-08 (Foreign Lock Resilienz):** Immediate fail-closed abortion upon encountering `LOCK*.txt` or active agent locks.
 - **INV-CROSS-09 (Cross-Platform Parity):** Identical behavior across Windows, Linux, and macOS with CRLF/LF line-ending tolerance.
 - **INV-SLA-10 (Security SLA):** 48-hour acknowledgment and 5-business-day triage commitment.
+- **INV-HUMAN-11 (Human-UI Boundary):** `/api/new` is the only JSON write path and may only submit open proposals; decide, intake and undo reject JSON and require an explicit HTML-UI action with a five-minute, single-use confirmation. AI, memory and policy code receives `ProposalSubmitter`, never the human `DecisionClicker` mutation facade.
+- **INV-EVIDENCE-12 (Provenance without Truth Claim):** Optional `EVIDENZANKER`, `GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` and `KONTEXT-FINGERPRINT` (`sha256:` + 64 hex) fields improve provenance lookup but never certify truth.
+- **INV-SDIST-13 (Distribution Privacy):** Source distributions carry approved synthetic fixtures only; the local real-data inbox audit file is explicitly excluded.
 
 ## Architecture Seam & Bundle Integration
 

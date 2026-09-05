@@ -305,18 +305,38 @@ Liest Einträge aus dem Desktop-Postfach ein und überführt sie idempotent in d
 | `/verlauf` | `GET` | Revisionshistorie bereits getroffener Entscheidungen | Keine |
 | `/neu` | `GET`, `POST` | Formular zur Erstellung neuer Entscheidungen | Host- & Origin-Prüfung |
 | `/api/index` | `GET` | Maschinenlesbarer JSON-Index | Keine |
-| `/api/decide` | `POST` | Entscheidung speichern | `X-Decision-Clicker: 1` oder Origin |
-| `/api/undo/<key>` | `POST` | Entscheidung reversibel zurücksetzen | `X-Decision-Clicker: 1` oder Origin |
-| `/api/takeover` | `POST` | Postfach-Import anstoßen | `X-Decision-Clicker: 1` oder Origin |
+| `/api/new` | `POST` | **Offenen Vorschlag** einstellen (einziger JSON-Schreibweg) | `X-Decision-Clicker: 1` + Host- & Origin-Prüfung |
+| `/api/decide` | `POST` | Entscheidung speichern | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
+| `/api/intake` | `POST` | Postfach-Import anstoßen | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
+| `/api/undo/<key>` | `POST` | Entscheidung reversibel zurücksetzen | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
 
-Automationsbeispiel via cURL:
+`/api/decide`, `/api/intake` und `/api/undo/*` lehnen `Content-Type:
+application/json` auch mit Schutzheader ab; sie verlangen eine ausdrückliche
+Aktion in der HTML-Oberfläche. Diese Formulare tragen eine fünf Minuten gültige,
+einmal verwendbare Bestätigung, die an Serverinstanz, Aktion und Eintrag
+gebunden ist. Ein bloßer Wechsel des Content-Type überschreitet die Grenze zur
+menschlichen Oberfläche daher nicht.
+
+Lokale Automation darf folglich nur **vorschlagen**:
 
 ```bash
-curl -X POST http://127.0.0.1:8096/api/decide \
+curl -X POST http://127.0.0.1:8096/api/new \
   -H "Content-Type: application/json" \
   -H "X-Decision-Clicker: 1" \
-  -d '{"key": "D-20260909-01", "choice": "B", "note": "Über automatisierten Agenten bestätigt"}'
+  -d '{"frage": "1.2.0 veröffentlichen?", "optionen": ["A: ja", "B: warten"]}'
 ```
+
+Ein eingestellter Kandidat wird immer als `STATUS: OFFEN` mit unbeantwortetem
+Nutzerfeld gerendert; mitgesendete Felder `status`, `decision` oder
+`implemented` bleiben wirkungslos. KI-, Memory- und Policy-Adapter erhalten
+`decision_clicker.api.ProposalSubmitter`, nicht die menschliche
+Mutationsfassade `DecisionClicker`.
+
+Optionale Belegmetadaten nutzen diese einzeiligen Felder: `EVIDENZANKER`,
+`GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` und
+`KONTEXT-FINGERPRINT`. Mehrere Werte werden mit ` | ` verbunden; ein
+Fingerprint hat die Form `sha256:` plus 64 Hex-Zeichen. Sie verbessern die
+Belegsuche, bescheinigen aber niemals Wahrheit.
 
 ---
 

@@ -7,6 +7,8 @@ Sicherung an und prueft auf fremde Sperren im Kettenordner.
 from __future__ import annotations
 
 import json
+import secrets
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -50,6 +52,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "DecisionClicker/1.0"
     settings: Settings
     skipped: set[str]
+    confirmations: dict[str, tuple[int, str, str, float]] = {}
 
     # -- Infrastruktur ----------------------------------------------------
     def log_message(self, fmt: str, *args) -> None:  # noqa: A002
@@ -143,14 +146,15 @@ class Handler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             raise writer.WriteError("Anfrage zu gross")
         raw = self.rfile.read(length).decode("utf-8") if length else ""
+        self._body_consumed = True
         if "application/json" in (self.headers.get("Content-Type") or ""):
             self.wants_json = True
             daten = json.loads(raw or "{}")
-            if isinstance(daten.get("optionen"), list):
-                daten["optionen"] = "\n".join(
-                    writer.single_line(str(option), "Eine Option")
-                    for option in daten["optionen"]
-                )
+            for name in ("optionen", "evidenzanker", "gegenbelege", "fehlende_informationen"):
+                if isinstance(daten.get(name), list):
+                    daten[name] = "\n".join(
+                        writer.single_line(str(value), name) for value in daten[name]
+                    )
             return {k: ("" if v is None else str(v)) for k, v in daten.items()}
         self.wants_json = False
         return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
@@ -178,6 +182,31 @@ class Handler(BaseHTTPRequestHandler):
             return f"Fremde Sperre im Entscheidungsordner aktiv ({namen}) — es wird nicht geschrieben."
         return ""
 
+    def _issue_confirmation(self, action: str, key: str) -> str:
+        """Kurzlebige, einmal verwendbare Fähigkeit für einen gerenderten UI-Akt."""
+        now = time.monotonic()
+        for old_token, confirmation in list(self.confirmations.items()):
+            if confirmation[3] < now:
+                self.confirmations.pop(old_token, None)
+        while len(self.confirmations) >= 1024:
+            self.confirmations.pop(next(iter(self.confirmations)))
+        token = secrets.token_urlsafe(32)
+        self.confirmations[token] = (id(self.server), action, key, now + 300)
+        return token
+
+    def _require_confirmation(self, form: dict[str, str], action: str, key: str) -> None:
+        token = form.get("confirmation", "")
+        expected = self.confirmations.pop(token, None) if token else None
+        if (
+            expected is None
+            or expected[:3] != (id(self.server), action, key)
+            or expected[3] < time.monotonic()
+        ):
+            raise RequestRejected(
+                "Diese Änderung braucht eine frische, aktionsgebundene Bestätigung "
+                "aus der menschlichen HTML-Oberfläche."
+            )
+
     # -- GET ---------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
         url = urlparse(self.path)
@@ -193,8 +222,9 @@ class Handler(BaseHTTPRequestHandler):
     def _route_get(self, path: str, query: dict[str, str]) -> None:
         if path == "/":
             index = chain.build_index(self.settings)
+            postfach = self._postfach(index)
             self._send(ui.home(chain.counts(index), chain.open_entries(index), self._guard(),
-                               self._postfach(index)))
+                               postfach, self._issue_confirmation("intake", "*") if postfach else ""))
         elif path == "/klick":
             self._klick(query)
         elif path == "/neu":
@@ -208,7 +238,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/register":
             self._register(query.get("q", ""))
         elif path == "/verlauf":
-            self._send(ui.verlauf(chain.clicker_history(self.settings)))
+            history = chain.clicker_history(self.settings)
+            tokens = {
+                entry["id"]: self._issue_confirmation("undo", entry["id"])
+                for entry in history if entry["status"] == "aktiv"
+            }
+            self._send(ui.verlauf(history, tokens))
         elif path == "/api/history":
             self._json({"eintraege": chain.clicker_history(self.settings)})
         elif path == "/api/index":
@@ -252,7 +287,8 @@ class Handler(BaseHTTPRequestHandler):
             roh = entry_text(self.settings, entry)
             entry = dict(entry, _raw=roh, _optionen=options_of(entry, roh))
         verbleibend = len([e for e in offen if e["key"] not in self.skipped])
-        self._send(ui.klick(entry, verbleibend, self._guard()))
+        confirmation = self._issue_confirmation("decide", entry["key"]) if entry else ""
+        self._send(ui.klick(entry, verbleibend, self._guard(), confirmation))
 
     def _register(self, suche: str) -> None:
         index = chain.build_index(self.settings)
@@ -268,22 +304,36 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST --------------------------------------------------------------
     def do_POST(self) -> None:  # noqa: N802
+        self._body_consumed = False
         try:
             self._verify_write_request()
             form = self._form()
             pfad = urlparse(self.path).path
+            if getattr(self, "wants_json", False) and pfad != "/api/new":
+                raise RequestRejected(
+                    "JSON-Kandidaten dürfen nur Vorschläge einstellen; Entscheidung, "
+                    "Undo und Intake erfordern eine ausdrückliche menschliche UI-Aktion."
+                )
             with writer.MUTATION_LOCK:
                 if pfad == "/api/decide":
+                    self._require_confirmation(form, "decide", form.get("key", ""))
                     self._decide(form)
                 elif pfad == "/api/new":
                     self._new(form)
                 elif pfad == "/api/intake":
+                    self._require_confirmation(form, "intake", "*")
                     self._intake()
                 elif pfad.startswith("/api/undo/"):
-                    self._undo(unquote(pfad[len("/api/undo/"):]))
+                    key = unquote(pfad[len("/api/undo/"):])
+                    self._require_confirmation(form, "undo", key)
+                    self._undo(key)
                 else:
                     self._send(ui.meldung("Nicht gefunden", self.path, "/", "Übersicht"), 404)
         except RequestRejected as exc:
+            if not self._body_consumed:
+                length = min(int(self.headers.get("Content-Length") or 0), MAX_BODY)
+                if length:
+                    self.rfile.read(length)
             self._send(ui.meldung("Zugriff abgewiesen", str(exc), "/", "Übersicht"), 403)
         except (writer.WriteError, chain.ChainError) as exc:
             self._send(ui.meldung("Nicht geschrieben", str(exc), "/klick", "Weiter"), 409)
@@ -325,7 +375,10 @@ class Handler(BaseHTTPRequestHandler):
             # unbemerkte Klicks in Folge).
             offen = chain.open_entries(chain.build_index(self.settings))
             rest = len([e for e in offen if e["key"] not in self.skipped])
-            self._send(ui.bestaetigung(entry["id"], entry["title"], choice, note, rest))
+            undo_confirmation = self._issue_confirmation("undo", entry["id"])
+            self._send(ui.bestaetigung(
+                entry["id"], entry["title"], choice, note, rest, undo_confirmation
+            ))
 
     def _undo(self, key: str) -> None:
         if blocker := self._guard():
@@ -362,6 +415,9 @@ class Handler(BaseHTTPRequestHandler):
         entry_id = chain.next_id(index)
         ziel = chain.target_part(self.settings)
         optionen = [ln.strip() for ln in form.get("optionen", "").splitlines() if ln.strip()]
+        def liste(name: str) -> list[str]:
+            return [ln.strip() for ln in form.get(name, "").splitlines() if ln.strip()]
+
         rendered = writer.render_entry(
             entry_id, title,
             quelle=form.get("quelle", "").strip(),
@@ -370,6 +426,11 @@ class Handler(BaseHTTPRequestHandler):
             empfehlung=form.get("empfehlung", "").strip(),
             kontext=form.get("kontext", ""),
             scope=form.get("scope", "").strip(),
+            evidenzanker=liste("evidenzanker"),
+            gegenbelege=liste("gegenbelege"),
+            fehlende_informationen=liste("fehlende_informationen"),
+            erstellt_von=form.get("erstellt_von", "").strip(),
+            kontext_fingerprint=form.get("kontext_fingerprint", "").strip(),
         )
         ergebnis = writer.append_entry(self.settings, ziel, rendered)
         try:
@@ -399,6 +460,7 @@ def serve(settings: Settings | None = None) -> None:
         )
     Handler.settings = settings
     Handler.skipped = set()
+    Handler.confirmations = {}
     httpd = ThreadingHTTPServer((settings.host, settings.port), Handler)
     url = f"http://{settings.host}:{settings.port}"
     print("=" * 52)
