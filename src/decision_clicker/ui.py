@@ -111,7 +111,7 @@ def numbers(data: dict[str, int]) -> str:
     return f'<div class="zahlen">{zellen}</div>'
 
 
-def intake_banner(offene: list[dict]) -> str:
+def intake_banner(offene: list[dict], confirmation: str = "") -> str:
     """Postfach-Hinweis mit Übernahme-Knopf — GET schreibt nie von selbst."""
     if not offene:
         return ""
@@ -123,15 +123,17 @@ def intake_banner(offene: list[dict]) -> str:
             "<code>Desktop\\TO-DECIDE-USER.txt</code>. Die Einträge werden in die Kette "
             "übernommen und dort vermerkt — im Postfach wird nichts gelöscht.</p>"
             f"<ul>{zeilen}</ul>"
-            '<form method="post" action="/api/intake"><div class="reihe">'
+            '<form method="post" action="/api/intake">'
+            f'<input type="hidden" name="confirmation" value="{escape(confirmation)}">'
+            '<div class="reihe">'
             '<button class="prim" type="submit">Jetzt übernehmen</button>'
             "</div></form></div>")
 
 
 def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
-         postfach: list[dict] | None = None) -> bytes:
+         postfach: list[dict] | None = None, intake_confirmation: str = "") -> bytes:
     kopf = f'<div class="warn">{escape(hinweis)}</div>' if hinweis else ""
-    kopf += intake_banner(postfach or [])
+    kopf += intake_banner(postfach or [], intake_confirmation)
     if offen:
         zeilen = "".join(
             f'<tr><td><a href="/klick?key={escape(e["key"])}"><code>{escape(e["key"])}</code></a></td>'
@@ -153,7 +155,7 @@ def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
     return layout("Übersicht", body, "home")
 
 
-def klick(entry: dict | None, rest: int, hinweis: str = "") -> bytes:
+def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = "") -> bytes:
     if entry is None:
         body = (
             "<h1>Durchklicken</h1>"
@@ -193,6 +195,7 @@ noch {rest} offen</div>
 {empf_block}
 <form method="post" action="/api/decide" class="card">
 <input type="hidden" name="key" value="{escape(entry["key"])}">
+<input type="hidden" name="confirmation" value="{escape(confirmation)}">
 <h2>Entscheidung</h2>{knoepfe}
 <label>Anmerkung <span class="hint">(optional, wird mit eingetragen)</span></label>
 <textarea name="note" rows="2" placeholder="Begründung, Einschränkung, Auflage …"></textarea>
@@ -202,7 +205,8 @@ noch {rest} offen</div>
     return layout("Durchklicken", body, "klick")
 
 
-def bestaetigung(entry_id: str, title: str, choice: str, note: str = "", rest: int = 0) -> bytes:
+def bestaetigung(entry_id: str, title: str, choice: str, note: str = "", rest: int = 0,
+                 undo_confirmation: str = "") -> bytes:
     """Deutliche Rueckmeldung nach dem Klick — keine stille Weiterleitung mehr.
 
     Der Nutzer sieht explizit, WAS gerade geschrieben wurde, und bekommt einen
@@ -219,6 +223,7 @@ def bestaetigung(entry_id: str, title: str, choice: str, note: str = "", rest: i
 <p>Gewählt: <b>{escape(choice)}</b>{anmerkung}</p>
 <div class="reihe">
 <form method="post" action="/api/undo/{escape(entry_id)}">
+<input type="hidden" name="confirmation" value="{escape(undo_confirmation)}">
 <button class="btn" type="submit">Rückgängig machen</button></form>
 {weiter}
 <a class="btn" href="/verlauf">Verlauf</a>
@@ -227,12 +232,13 @@ def bestaetigung(entry_id: str, title: str, choice: str, note: str = "", rest: i
     return layout("Entschieden", body, "klick")
 
 
-def _verlauf_zeile(e: dict) -> str:
+def _verlauf_zeile(e: dict, confirmation: str = "") -> str:
     reset_hint = (f' <span class="hint">{escape(e["reset_on"])}'
                   f' — {escape(e["reset_reason"])}</span>' if e["status"] != "aktiv" else "")
     aktion = ""
     if e["status"] == "aktiv":
         aktion = (f'<form method="post" action="/api/undo/{escape(e["id"])}">'
+                  f'<input type="hidden" name="confirmation" value="{escape(confirmation)}">'
                   '<button class="btn" type="submit">Rückgängig</button></form>')
     status = "zurückgesetzt" if e["status"] == "zurueckgesetzt" else e["status"]
     return (
@@ -245,9 +251,10 @@ def _verlauf_zeile(e: dict) -> str:
     )
 
 
-def verlauf(eintraege: list[dict]) -> bytes:
+def verlauf(eintraege: list[dict], confirmations: dict[str, str] | None = None) -> bytes:
     if eintraege:
-        zeilen = "".join(_verlauf_zeile(e) for e in eintraege)
+        confirmations = confirmations or {}
+        zeilen = "".join(_verlauf_zeile(e, confirmations.get(e["id"], "")) for e in eintraege)
         tabelle = ("<table><tr><th>ID</th><th>Titel</th><th>Wahl</th><th>Am</th>"
                    f"<th>Status</th><th></th></tr>{zeilen}</table>")
     else:
@@ -277,6 +284,16 @@ Ziel: <code>{escape(ziel)}</code></div>
 <input name="empfehlung" placeholder="A — weil …">
 <label>Quelle <span class="hint">(Datei, Lauf, Briefing)</span></label>
 <input name="quelle">
+<label>Evidenzanker <span class="hint">(optional, je Zeile eine stabile Fundstelle)</span></label>
+<textarea name="evidenzanker" rows="3"></textarea>
+<label>Gegenbelege <span class="hint">(optional, je Zeile)</span></label>
+<textarea name="gegenbelege" rows="2"></textarea>
+<label>Fehlende Informationen <span class="hint">(optional, je Zeile)</span></label>
+<textarea name="fehlende_informationen" rows="2"></textarea>
+<label>Erstellt von <span class="hint">(Person oder Adapterkennung)</span></label>
+<input name="erstellt_von">
+<label>Kontext-Fingerprint <span class="hint">(optional: sha256:&lt;64 Hex-Zeichen&gt;)</span></label>
+<input name="kontext_fingerprint">
 <label>Geltung <span class="hint">(leer = global)</span></label>
 <input name="scope" placeholder="global | host:WORKSTATION | projekt:…">
 <div class="reihe"><button class="prim" type="submit">In die Kette einstellen</button>

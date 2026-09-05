@@ -20,10 +20,55 @@ from pathlib import Path
 from . import chain, intake, ui, writer
 from .config import Settings, load
 
-__all__ = ["DecisionClicker", "ChainError", "WriteError"]
+__all__ = ["DecisionClicker", "ProposalSubmitter", "ChainError", "WriteError"]
 
 ChainError = chain.ChainError
 WriteError = writer.WriteError
+
+
+def _settings_for(chain_dir: str | Path | None) -> Settings:
+    settings = load()
+    if chain_dir:
+        from dataclasses import replace
+        settings = replace(settings, chain_dir=Path(chain_dir).expanduser())
+    return settings
+
+
+def _submit_proposal(
+    settings: Settings, title: str, *, frage: str = "", optionen: list[str] | None = None,
+    empfehlung: str = "", kontext: str = "", quelle: str = "", scope: str = "",
+    evidenzanker: list[str] | None = None, gegenbelege: list[str] | None = None,
+    fehlende_informationen: list[str] | None = None, erstellt_von: str = "",
+    kontext_fingerprint: str = "",
+) -> dict:
+    """Nur einen offenen Vorschlag schreiben; keine Antwort-/Done-Fähigkeit."""
+    with writer.MUTATION_LOCK:
+        fremde = writer.foreign_locks(settings)
+        if fremde:
+            raise WriteError(
+                f"Fremde Sperre im Entscheidungsordner ({', '.join(p.name for p in fremde)}) "
+                "— es wird nicht geschrieben."
+            )
+        if not (title or "").strip():
+            raise WriteError("Ohne Titel wird nichts eingestellt.")
+        index = chain.build_index(settings)
+        chain.require_valid_contract(index)
+        entry_id = chain.next_id(index)
+        ziel = chain.target_part(settings)
+        rendered = writer.render_entry(
+            entry_id, title.strip(), quelle=quelle.strip(), frage=frage.strip(),
+            optionen=[o for o in (optionen or []) if o.strip()],
+            empfehlung=empfehlung.strip(), kontext=kontext, scope=scope.strip(),
+            evidenzanker=evidenzanker, gegenbelege=gegenbelege,
+            fehlende_informationen=fehlende_informationen,
+            erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+        )
+        ergebnis = writer.append_entry(settings, ziel, rendered)
+        try:
+            chain.refresh_artifacts(settings)
+        except Exception:  # noqa: BLE001 -- Kette ist kanonisch, Index abgeleitet
+            pass
+        return {"ok": True, "id": entry_id, "title": title.strip(), **ergebnis}
 
 
 def options_of(entry: dict, raw: str) -> list[tuple[str, str]]:
@@ -46,10 +91,7 @@ class DecisionClicker:
     """Fassade auf eine Entscheidungskette."""
 
     def __init__(self, chain_dir: str | Path | None = None) -> None:
-        self.settings: Settings = load()
-        if chain_dir:
-            from dataclasses import replace
-            self.settings = replace(self.settings, chain_dir=Path(chain_dir).expanduser())
+        self.settings = _settings_for(chain_dir)
 
     # ------------------------------------------------------------------
     # Lesen
@@ -177,23 +219,17 @@ class DecisionClicker:
 
     def create(self, title: str, *, frage: str = "", optionen: list[str] | None = None,
                empfehlung: str = "", kontext: str = "", quelle: str = "",
-               scope: str = "") -> dict:
+               scope: str = "", evidenzanker: list[str] | None = None,
+               gegenbelege: list[str] | None = None,
+               fehlende_informationen: list[str] | None = None,
+               erstellt_von: str = "", kontext_fingerprint: str = "") -> dict:
         """Neue Entscheidung konventionsgemaess in die KETTE einstellen."""
-        with writer.MUTATION_LOCK:
-            self._guard()
-            if not (title or "").strip():
-                raise WriteError("Ohne Titel wird nichts eingestellt.")
-            index = chain.build_index(self.settings)
-            chain.require_valid_contract(index)
-            entry_id = chain.next_id(index)
-            ziel = chain.target_part(self.settings)
-            rendered = writer.render_entry(
-                entry_id, title.strip(), quelle=quelle.strip(), frage=frage.strip(),
-                optionen=[o for o in (optionen or []) if o.strip()],
-                empfehlung=empfehlung.strip(), kontext=kontext, scope=scope.strip())
-            ergebnis = writer.append_entry(self.settings, ziel, rendered)
-            self._refresh()
-            return {"ok": True, "id": entry_id, "title": title.strip(), **ergebnis}
+        return _submit_proposal(
+            self.settings, title, frage=frage, optionen=optionen, empfehlung=empfehlung,
+            kontext=kontext, quelle=quelle, scope=scope, evidenzanker=evidenzanker,
+            gegenbelege=gegenbelege, fehlende_informationen=fehlende_informationen,
+            erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+        )
 
     # ------------------------------------------------------------------
     # Desktop-Postfach
@@ -219,3 +255,29 @@ class DecisionClicker:
             chain.refresh_artifacts(self.settings)
         except Exception:  # noqa: BLE001
             pass
+
+
+class ProposalSubmitter:
+    """Schmale Grenze für KI-, Memory- und Policy-Kandidaten.
+
+    Dieser Adapter kann ausschließlich offene Vorschläge einstellen. Er bietet
+    absichtlich weder ``decide``/``done`` noch ``undo``. Menschliche UI-Adapter
+    verwenden für einen sichtbaren Klick weiterhin :class:`DecisionClicker`.
+    """
+
+    def __init__(self, chain_dir: str | Path | None = None) -> None:
+        self._settings = _settings_for(chain_dir)
+
+    def submit(self, title: str, *, frage: str = "", optionen: list[str] | None = None,
+               empfehlung: str = "", kontext: str = "", quelle: str = "",
+               scope: str = "", evidenzanker: list[str] | None = None,
+               gegenbelege: list[str] | None = None,
+               fehlende_informationen: list[str] | None = None,
+               erstellt_von: str = "", kontext_fingerprint: str = "") -> dict:
+        return _submit_proposal(
+            self._settings, title, frage=frage, optionen=optionen, empfehlung=empfehlung,
+            kontext=kontext, quelle=quelle, scope=scope,
+            evidenzanker=evidenzanker, gegenbelege=gegenbelege,
+            fehlende_informationen=fehlende_informationen,
+            erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+        )

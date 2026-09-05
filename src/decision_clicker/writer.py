@@ -32,6 +32,7 @@ MUTATION_LOCK = threading.RLock()
 
 ENTRY_ID_RE = re.compile(r"^D-\d{8}-\d{2,4}(?:-[A-Za-z0-9]+)*$")
 LINE_BREAK_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
+CONTEXT_FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class WriteError(RuntimeError):
@@ -43,6 +44,13 @@ def single_line(value: str, field: str) -> str:
     if LINE_BREAK_RE.search(value):
         raise WriteError(f"{field} darf keinen Zeilenumbruch enthalten.")
     return value.strip()
+
+
+def metadata_values(values: list[str] | None, field: str) -> str:
+    """Optionale Metadatenliste als stabiles, rücklesbares Skalarfeld rendern."""
+    return " | ".join(
+        value for item in (values or []) if (value := single_line(item, field))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +407,11 @@ def render_entry(
     empfehlung: str = "",
     kontext: str = "",
     scope: str = "",
+    evidenzanker: list[str] | None = None,
+    gegenbelege: list[str] | None = None,
+    fehlende_informationen: list[str] | None = None,
+    erstellt_von: str = "",
+    kontext_fingerprint: str = "",
     newline: str = "\r\n",
 ) -> str:
     """Eintrag nach der Konvention des Kettenkopfes parserfest rendern.
@@ -416,6 +429,13 @@ def render_entry(
     frage = single_line(frage, "Frage")
     empfehlung = single_line(empfehlung, "Empfehlung")
     scope = single_line(scope, "Scope")
+    evidenzanker_text = metadata_values(evidenzanker, "Evidenzanker")
+    gegenbelege_text = metadata_values(gegenbelege, "Gegenbeleg")
+    fehlende_text = metadata_values(fehlende_informationen, "Fehlende Information")
+    erstellt_von = single_line(erstellt_von, "Erstellt von")
+    kontext_fingerprint = single_line(kontext_fingerprint, "Kontext-Fingerprint").lower()
+    if kontext_fingerprint and not CONTEXT_FINGERPRINT_RE.fullmatch(kontext_fingerprint):
+        raise WriteError("Kontext-Fingerprint muss sha256: gefolgt von 64 Hex-Zeichen sein.")
     if status.strip().upper() == "OFFEN":
         if not frage:
             raise WriteError("Eine aktive Entscheidung benötigt eine Frage.")
@@ -426,6 +446,15 @@ def render_entry(
         rows.append(f"SCOPE: {scope}")
     if quelle:
         rows.append(f"QUELLE: {quelle}")
+    for name, value in (
+        ("EVIDENZANKER", evidenzanker_text),
+        ("GEGENBELEGE", gegenbelege_text),
+        ("FEHLENDE INFORMATIONEN", fehlende_text),
+        ("ERSTELLT VON", erstellt_von),
+        ("KONTEXT-FINGERPRINT", kontext_fingerprint),
+    ):
+        if value:
+            rows += ["", f"{name}: {value}"]
     if kontext:
         context_lines = kontext.strip().splitlines() or [""]
         rows += ["", "KONTEXT:", *[f"> {line}" if line else ">" for line in context_lines]]

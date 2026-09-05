@@ -9,6 +9,7 @@
   "visibility": "private",
   "provides": [
     "decision.clicker",
+    "decisions.propose",
     "decisions.write",
     "decisions.review-ui"
   ],
@@ -46,7 +47,7 @@
       "id": "policy-registry-decision-locations-v1",
       "target": "policy-registry",
       "status": "required-by-target-bundle",
-      "note": "Decision-system bundle relationship, superseding the optional composition decision from T-20260824-474639761 by user decision on 2026-08-27: policy-registry requires the decision.clicker capability as its fixed human writer/UI component. The coupling remains data-level through the same _DECISIONS chain; decision-clicker still has no runtime import of policy-registry and remains directly startable for maintenance and recovery."
+      "note": "Decision-system bundle relationship, superseding the optional composition decision from T-20260824-474639761 by user decision on 2026-08-27: policy-registry requires the decision.clicker capability as its fixed human writer/UI component. AI, memory, and policy integrations receive only the decisions.propose surface; decide, implementation status, intake, and undo stay on an explicit human UI path. The coupling remains data-level through the same _DECISIONS chain; decision-clicker still has no runtime import of policy-registry and remains directly startable for maintenance and recovery."
     }
   ]
 }

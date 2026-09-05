@@ -2,6 +2,7 @@
 """HTTP-Ebene: echte Anfragen gegen einen echten Server auf einer Kopie."""
 from __future__ import annotations
 
+import re
 import threading
 import urllib.error
 import urllib.parse
@@ -22,6 +23,7 @@ def server(kette: Settings):
     """Server auf freiem Port — belegt nie 8096, damit Tests nichts stoeren."""
     Handler.settings = kette
     Handler.skipped = set()
+    Handler.confirmations = {}
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -38,7 +40,32 @@ def hole(url: str) -> tuple[int, str]:
         return fehler.code, fehler.read().decode("utf-8")
 
 
-def sende(url: str, daten: dict[str, str], headers: dict[str, str] | None = None) -> tuple[int, str]:
+def _ui_confirmation(url: str, daten: dict[str, str]) -> str:
+    parsed = urllib.parse.urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.path == "/api/decide":
+        page = hole(f"{base}/klick?{urllib.parse.urlencode({'key': daten.get('key', '')})}")[1]
+    elif parsed.path == "/api/intake":
+        page = hole(f"{base}/")[1]
+    elif parsed.path.startswith("/api/undo/"):
+        page = hole(f"{base}/verlauf")[1]
+    else:
+        return ""
+    form = re.search(
+        rf'<form[^>]+action="{re.escape(parsed.path)}"[^>]*>(.*?)</form>', page, re.S
+    )
+    if not form:
+        return ""
+    token = re.search(r'name="confirmation" value="([^"]+)"', form.group(1))
+    return token.group(1) if token else ""
+
+
+def sende(url: str, daten: dict[str, str], headers: dict[str, str] | None = None,
+          *, with_confirmation: bool = True) -> tuple[int, str]:
+    daten = dict(daten)
+    if with_confirmation and "confirmation" not in daten:
+        if token := _ui_confirmation(url, daten):
+            daten["confirmation"] = token
     roh = urllib.parse.urlencode(daten).encode("utf-8")
     request = urllib.request.Request(url, data=roh, headers=headers or {})
     try:
@@ -169,19 +196,83 @@ def test_klick_zeigt_deutliche_bestaetigung_statt_stiller_weiterleitung(server):
     assert "Weiter zur nächsten Entscheidung" in seite
 
 
-def test_decide_ueber_json_bekommt_weiter_json_ohne_bestaetigungsseite(server):
-    """Automationen (JSON-Aufrufer) bekommen weiterhin nur die Rohdaten."""
-    import json
+def test_decide_ueber_json_wird_ohne_schreiben_abgewiesen(server):
+    """JSON ist der Kandidatenkanal; entscheiden darf nur eine sichtbare Nutzeraktion."""
     url, kette = server
     ziel = chain.open_entries(chain.build_index(kette))[0]
-    payload = json.dumps({"key": ziel["key"], "choice": "A", "note": ""}).encode("utf-8")
-    request = urllib.request.Request(
-        f"{url}/api/decide", data=payload,
-        headers={"Content-Type": "application/json", "X-Decision-Clicker": "1"})
-    with urllib.request.urlopen(request, timeout=10) as antwort:
-        daten = json.loads(antwort.read().decode("utf-8"))
-    assert daten["ok"] is True
-    assert daten["id"] == ziel["id"]
+    vorher = Path(ziel["source_path"]).read_bytes()
+    status, text = sende_json(
+        f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""}
+    )
+    assert status == 403
+    assert "menschliche" in text
+    assert Path(ziel["source_path"]).read_bytes() == vorher
+
+
+def test_form_decide_braucht_frische_aktionsgebundene_ui_bestaetigung(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    vorher = Path(ziel["source_path"]).read_bytes()
+    status, text = sende(
+        f"{url}/api/decide", {"key": ziel["key"], "choice": "A"},
+        with_confirmation=False,
+    )
+    assert status == 403
+    assert "aktionsgebundene Bestätigung" in text
+    assert Path(ziel["source_path"]).read_bytes() == vorher
+
+
+def test_ui_bestaetigung_ist_einmalig_und_an_die_entscheidung_gebunden(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    token = _ui_confirmation(f"{url}/api/decide", {"key": ziel["key"]})
+    assert token
+    status, _ = sende(
+        f"{url}/api/decide",
+        {"key": ziel["key"], "choice": "A", "confirmation": token},
+    )
+    assert status == 200
+    zweites_ziel = chain.open_entries(chain.build_index(kette))[0]
+    vorher = Path(zweites_ziel["source_path"]).read_bytes()
+    status, _ = sende(
+        f"{url}/api/decide",
+        {"key": zweites_ziel["key"], "choice": "A", "confirmation": token},
+    )
+    assert status == 403
+    assert Path(zweites_ziel["source_path"]).read_bytes() == vorher
+
+
+def test_json_kandidat_kann_status_entscheidung_und_implemented_nicht_setzen(server):
+    url, kette = server
+    status, daten = sende_json(
+        f"{url}/api/new",
+        {
+            "title": "Policy-Kandidat",
+            "frage": "Welche Variante?",
+            "optionen": ["A — x", "B — y"],
+            "status": "DONE",
+            "entscheidung": "A",
+            "implemented": True,
+        },
+    )
+    assert status == 200
+    entry = chain.find(chain.build_index(kette), daten["id"])
+    assert entry["status_class"] == chain.STATUS_OPEN
+    raw = DecisionClicker(kette.chain_dir).raw_text(entry)
+    assert "STATUS: OFFEN" in raw
+    assert "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]" in raw
+    assert "implemented" not in raw.lower()
+
+
+def test_undo_ueber_json_wird_ohne_schreiben_abgewiesen(server):
+    url, kette = server
+    ziel = chain.open_entries(chain.build_index(kette))[0]
+    sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
+    stand = kette.done_file.read_bytes()
+    status, text = sende_json(f"{url}/api/undo/{ziel['key']}", {})
+    assert status == 403
+    assert "menschliche" in text
+    assert kette.done_file.read_bytes() == stand
 
 
 def test_http_decide_verifiziert_die_indexierte_id(server, monkeypatch):
@@ -283,8 +374,8 @@ def test_zweiter_klick_auf_dieselbe_id_prallt_ab(server):
     pfad = Path(ziel["source_path"])
     stand = pfad.read_bytes()
     status, seite = sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "B", "note": ""})
-    assert status == 409
-    assert "bereits entschieden" in seite
+    assert status == 403
+    assert "Bestätigung" in seite
     assert pfad.read_bytes() == stand
 
 
@@ -459,15 +550,15 @@ def test_zweiter_undo_ueber_http_prallt_ab(server):
     sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
     sende(f"{url}/api/undo/{ziel['key']}", {})
     status, seite = sende(f"{url}/api/undo/{ziel['key']}", {})
-    assert status == 409
-    assert "nicht rückgängig machbar" in seite or "extern entschieden" in seite
+    assert status == 403
+    assert "Bestätigung" in seite
 
 
 def test_undo_auf_nie_entschiedene_id_prallt_ab(server):
     url, kette = server
     ziel = chain.open_entries(chain.build_index(kette))[0]
     status, _seite = sende(f"{url}/api/undo/{ziel['key']}", {})
-    assert status == 409
+    assert status == 403
 
 
 def test_fremde_sperre_verhindert_auch_das_undo(server):
