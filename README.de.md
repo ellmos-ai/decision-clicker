@@ -118,7 +118,7 @@ Die Integrität von Decision Clicker wird durch 10 verbindliche Invarianten gesi
 | **INV-BACKUP-05** | **Byte-getreue Vorab-Sicherung** | Vor jeder Modifikation einer Kettendatei wird eine byte-exakte Sicherung mit Zeitstempel angelegt. | `writer.py` Backup-Routine unter `_decision-archive/_bak/`. |
 | **INV-NOWRITE-06** | **Kein Überschreiben** | Bereits beantwortete Entscheidungen dürfen nicht überschrieben werden; nur Platzhalter können gefüllt werden. | Strikte Prüfung auf Platzhalter vor jeder Schreiboperation. |
 | **INV-UNDO-07** | **Reversibles Undo mit Nachweis** | Nur Entscheidungen mit nachweislicher Decision-Clicker-Herkunft können zurückgesetzt werden; Protokoll ist append-only. | Herkunftsmarkierungsprüfung; Rücksetzungs-Eintrag im Verlauf. |
-| **INV-LOCK-08** | **Resilienz bei Fremdsperren** | Stoppt sofort bei Vorhandensein fremder Sperren (`LOCK*.txt`, `LOCK.user.*`). | Fail-Closed Prüfung vor dem Öffnen von Schreib-Handles. |
+| **INV-LOCK-08** | **Resilienz bei Fremdsperren** | Stoppt sofort bei fremden Sperren (`LOCK*.txt`, `LOCK.user.*`), einschließlich einer nicht selbst besessenen gleichnamigen Clicker-Sperre. | Fail-Closed Prüfung vor dem Öffnen von Schreib-Handles. |
 | **INV-CROSS-09** | **Plattformparität** | Vollständig deterministisches Verhalten unter Windows, Linux und macOS mit zeilenumbruchstolerantem Parsing. | Universelle Normalisierung von CRLF/LF (`\r\n` / `\n`) in Tests und I/O. |
 | **INV-SLA-10** | **Sicherheits-Reaktions-SLA** | 48 Stunden Eingangsbestätigung und 5 Werktage verbindliche Triage-Zusage. | Dokumentiert in `SECURITY.md` mit Multi-Kanal-Eskalation. |
 
@@ -186,6 +186,7 @@ Decision Clicker wurde speziell für vertrauliche persönliche und unternehmeris
 - **CSRF- & Origin-Schutz:** Mutierende Endpunkte validieren passende `Host`- und `Origin`-Header. Cross-Origin Fetch-Metadaten werden abgewiesen.
 - **Lokales Automations-Token:** Programmatische JSON-Anfragen erfordern den Header `X-Decision-Clicker: 1`.
 - **Fail-Closed bei Sperren:** Schreiboperationen brechen unverzüglich ab, falls eine `LOCK*.txt`-Datei vorliegt.
+- **Eigene Lock-Claims:** Öffentliche Lock-Helfer übernehmen die neutrale Clicker-Sperre exklusiv. Eine bereits vorhandene gleichnamige Datei ist fremd; die Freigabe gelingt nur für den eigenen, bytegenau unveränderten Claim des aktuellen Prozesses.
 - **Byte-erhaltende Sicherungen:** Backups bewahren Byte-Reihenfolge, Zeichenkodierung (UTF-8 / UTF-8-SIG) und Zeilenenden exakt.
 - **Sicherheits-SLA:** Verbindlich in [SECURITY.md](SECURITY.md) hinterlegt (48h Erstreaktion, 5 Tage Triage via `security@open-bricks.org` und `security@ellmos.ai`).
 

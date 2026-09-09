@@ -156,8 +156,9 @@ def test_cli_dry_run_schreibt_nicht(kette: Settings, capsys):
     assert chain.target_part(kette).read_bytes() == stand
 
 
-def test_cli_bricht_bei_fremder_sperre_ab(kette: Settings):
-    (kette.chain_dir / "LOCK.fremd.txt").write_text("belegt", encoding="utf-8")
+@pytest.mark.parametrize("lock_name", ["LOCK.fremd.txt", "LOCK.decision-clicker.txt"])
+def test_cli_bricht_bei_fremder_sperre_ab(kette: Settings, lock_name: str):
+    (kette.chain_dir / lock_name).write_text("belegt", encoding="utf-8")
     stand = chain.target_part(kette).read_bytes()
     assert cli.main(["add", "Gesperrt", "--chain", str(kette.chain_dir)]) == 3
     assert chain.target_part(kette).read_bytes() == stand
@@ -271,11 +272,12 @@ def test_ziel_id_wird_exakt_und_nicht_als_teilstring_geprueft(kette: Settings):
     assert pfad.read_bytes() == stand
 
 
-def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings):
+@pytest.mark.parametrize("lock_name", ["LOCK.fremd.txt", "LOCK.decision-clicker.txt"])
+def test_fassade_meldet_fremde_sperre_statt_zu_schreiben(kette: Settings, lock_name: str):
     from decision_clicker.api import DecisionClicker, WriteError
-    (kette.chain_dir / "LOCK.fremd.txt").write_text("belegt", encoding="utf-8")
+    (kette.chain_dir / lock_name).write_text("belegt", encoding="utf-8")
     c = DecisionClicker(kette.chain_dir)
-    assert c.status()["foreign_locks"] == ["LOCK.fremd.txt"]
+    assert c.status()["foreign_locks"] == [lock_name]
     with pytest.raises(WriteError, match="Fremde Sperre"):
         c.create("Gesperrt")
 

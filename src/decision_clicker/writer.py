@@ -10,9 +10,11 @@ kontrollierte Migrationen verfügbar.
 from __future__ import annotations
 
 import base64
+import os
 import re
 import shutil
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +31,7 @@ ORIGINAL_BLOCK_RE = re.compile(r"^ORIGINALBLOCK-BASE64\s*:\s*([A-Za-z0-9+/=]+)\s
 TOOL_TAG = "decision-clicker"
 PLACEHOLDER = "[HIER EINTRAGEN]"
 MUTATION_LOCK = threading.RLock()
+_OWNED_LOCKS: dict[Path, bytes] = {}
 
 ENTRY_ID_RE = re.compile(r"^D-\d{8}-\d{2,4}(?:-[A-Za-z0-9]+)*$")
 LINE_BREAK_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
@@ -722,36 +725,77 @@ def mark_taken_over(
 # Sperre
 # ---------------------------------------------------------------------------
 def write_lock(settings: Settings, purpose: str, hours: int = 24) -> Path:
+    """Die neutrale Clicker-Sperre exklusiv fuer diesen Prozess anlegen.
+
+    Der zurueckgegebene Pfad bleibt API-kompatibel. Eigentum wird intern ueber
+    die exakt geschriebenen Bytes inklusive eines zufaelligen Claim-Tokens
+    belegt; ein bereits vorhandener gleichnamiger Lock wird nie ueberschrieben.
+    """
     path = settings.lock_file
     now = datetime.now()
-    path.write_text(
-        "\n".join([
-            "LOCK — decision-clicker",
-            "AGENT: decision-clicker",
-            f"ZWECK: {purpose}",
-            f"ANGELEGT: {now.strftime('%Y-%m-%d %H:%M')}",
-            f"VERFALL: {hours} h",
-            "SCOPE: _DECISIONS (Kettendateien + DECIDED-AND-DONE.md)",
-            "",
-        ]),
-        encoding="utf-8",
-    )
+    claim = "\n".join([
+        "LOCK — decision-clicker",
+        "AGENT: decision-clicker",
+        f"CLAIM-ID: {uuid.uuid4().hex}",
+        f"PID: {os.getpid()}",
+        f"ZWECK: {purpose}",
+        f"ANGELEGT: {now.strftime('%Y-%m-%d %H:%M')}",
+        f"VERFALL: {hours} h",
+        "SCOPE: _DECISIONS (Kettendateien + DECIDED-AND-DONE.md)",
+        "",
+    ]).encode("utf-8")
+    with MUTATION_LOCK:
+        try:
+            with path.open("xb") as handle:
+                handle.write(claim)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as exc:
+            raise WriteError(f"Sperre bereits vorhanden; keine Übernahme: {path}") from exc
+        except OSError as exc:
+            raise WriteError(f"Sperre konnte nicht exklusiv angelegt werden: {path}: {exc}") from exc
+        _OWNED_LOCKS[path.resolve(strict=False)] = claim
     return path
 
 
 def release_lock(settings: Settings) -> bool:
-    if settings.lock_file.is_file():
-        settings.lock_file.unlink()
+    """Nur den unveraenderten, von diesem Prozess angelegten Claim loesen."""
+    path = settings.lock_file
+    key = path.resolve(strict=False)
+    with MUTATION_LOCK:
+        expected = _OWNED_LOCKS.get(key)
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            _OWNED_LOCKS.pop(key, None)
+            return False
+        except OSError as exc:
+            raise WriteError(f"Sperre konnte vor der Freigabe nicht gelesen werden: {path}: {exc}") from exc
+        if expected is None:
+            raise WriteError(f"Sperre gehört nicht diesem Prozess; keine Freigabe: {path}")
+        if current != expected:
+            raise WriteError(f"Eigener Lock wurde ersetzt oder verändert; keine Freigabe: {path}")
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise WriteError(f"Eigene Sperre konnte nicht freigegeben werden: {path}: {exc}") from exc
+        _OWNED_LOCKS.pop(key, None)
         return True
-    return False
 
 
 def foreign_locks(settings: Settings) -> list[Path]:
-    """Fremde Sperren im Kettenordner — Klicks werden dann verweigert."""
-    return [
-        path for path in settings.chain_dir.glob("LOCK*.txt")
-        if path.name != settings.lock_file.name
-    ]
+    """Fremde Sperren einschliesslich eines gleichnamigen Fremdclaims."""
+    own_path = settings.lock_file
+    with MUTATION_LOCK:
+        expected = _OWNED_LOCKS.get(own_path.resolve(strict=False))
+        try:
+            own_claim_is_current = expected is not None and own_path.read_bytes() == expected
+        except OSError:
+            own_claim_is_current = False
+        return [
+            path for path in settings.chain_dir.glob("LOCK*.txt")
+            if path != own_path or not own_claim_is_current
+        ]
 
 
 __all__ = [

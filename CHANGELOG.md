@@ -30,6 +30,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Harden the public lock helpers: lock acquisition is exclusive, each claim
+  carries a unique ownership token, a same-named pre-existing lock is foreign,
+  and release refuses a missing, unowned, changed, or replaced claim without
+  removing it (T-20260909-178020475).
 - Promote `decision-clicker` from an optional policy-registry seam to the
   fixed human writer/UI component of the decision-system bundle. The parent
   registry now requires the `decision.clicker` capability, while this package

@@ -118,7 +118,7 @@ The runtime integrity of Decision Clicker is governed by 10 non-negotiable invar
 | **INV-BACKUP-05** | **Byte-Preserving Pre-Write Backup** | Before modifying any chain file, a byte-for-byte timestamped backup is persisted. | `writer.py` backup routine into `_decision-archive/_bak/`. |
 | **INV-NOWRITE-06** | **Never Overwrite Decisions** | Existing answered choices can never be overwritten; only placeholder fields can be modified. | Strict validation against placeholder markers prior to mutation. |
 | **INV-UNDO-07** | **Reversible Undo with Provenance** | Only decisions provably authored by Decision Clicker can be undone; resets are append-only. | Provenance marker verification; reset entries appended to audit log. |
-| **INV-LOCK-08** | **Foreign Lock & Multi-Agent Resilienz** | Halts immediately upon encountering foreign locks (`LOCK*.txt`, `LOCK.user.*`). | Fail-closed lock inspection before acquiring write handles. |
+| **INV-LOCK-08** | **Foreign Lock & Multi-Agent Resilience** | Halts immediately upon encountering foreign locks (`LOCK*.txt`, `LOCK.user.*`), including an unowned same-named Clicker lock. | Fail-closed lock inspection before acquiring write handles. |
 | **INV-CROSS-09** | **Cross-Platform Parity** | 100% deterministic operation across Windows, Linux, and macOS with newline-agnostic parsing. | Universal newline normalization (`\r\n` / `\n`) across tests and I/O. |
 | **INV-SLA-10** | **Security Response SLA** | 48-hour response acknowledgment and 5-business-day triage commitment. | Documented security policy in `SECURITY.md` and multi-contact escalation. |
 
@@ -186,6 +186,7 @@ Decision Clicker is specifically built for sensitive personal and organizational
 - **CSRF & Origin Protection:** All mutating requests validate matching `Host` and `Origin` headers. Cross-site Fetch Metadata is rejected immediately.
 - **Local Automation Token:** Programmatic JSON writes require `X-Decision-Clicker: 1` to prevent unauthorized browser-scripted writes.
 - **Fail-Closed Foreign Locks:** Writing halts immediately if any `LOCK*.txt` file exists in the chain directory.
+- **Owned Lock Claims:** Public lock helpers acquire the neutral Clicker lock exclusively. A pre-existing same-named file is foreign, and release succeeds only for the current process's own, byte-unchanged claim.
 - **Atomic Pre-Write Backups:** Backups preserve byte order, character encodings (UTF-8 / UTF-8-SIG), and line endings.
 - **Security SLA:** Documented in [SECURITY.md](SECURITY.md) with a 48h acknowledgment and 5-day triage commitment via `security@open-bricks.org` and `security@ellmos.ai`.
 

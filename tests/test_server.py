@@ -297,11 +297,12 @@ def test_spaeter_ueberspringt_und_zeigt_die_naechste(server):
     assert offen[1]["key"] in seite
 
 
-def test_fremde_sperre_verhindert_das_schreiben(server):
+@pytest.mark.parametrize("lock_name", ["LOCK.anderer-agent.txt", "LOCK.decision-clicker.txt"])
+def test_fremde_sperre_verhindert_das_schreiben(server, lock_name: str):
     url, kette = server
     ziel = chain.open_entries(chain.build_index(kette))[0]
     pfad = Path(ziel["source_path"])
-    (kette.chain_dir / "LOCK.anderer-agent.txt").write_text("belegt", encoding="utf-8")
+    (kette.chain_dir / lock_name).write_text("belegt", encoding="utf-8")
     stand = pfad.read_bytes()
     status, seite = sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "A", "note": ""})
     assert status == 409
