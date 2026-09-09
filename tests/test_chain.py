@@ -218,3 +218,42 @@ def test_eigene_sperre_blockiert_sich_nicht_selbst(kette: Settings):
     assert writer.foreign_locks(kette) == []
     assert writer.release_lock(kette) is True
     assert not kette.lock_file.exists()
+
+
+def test_lock_uebernimmt_keinen_bereits_belegten_gleichnamigen_claim(kette: Settings):
+    fremd = b"LOCK -- foreign fixture\nAGENT: other-process\n"
+    kette.lock_file.write_bytes(fremd)
+
+    with pytest.raises(writer.WriteError, match="bereits vorhanden"):
+        writer.write_lock(kette, "Test")
+
+    assert kette.lock_file.read_bytes() == fremd
+    assert writer.foreign_locks(kette) == [kette.lock_file]
+
+
+def test_release_verweigert_fremden_gleichnamigen_claim(kette: Settings):
+    fremd = b"LOCK -- foreign fixture\nAGENT: other-process\n"
+    kette.lock_file.write_bytes(fremd)
+
+    with pytest.raises(writer.WriteError, match="nicht diesem Prozess"):
+        writer.release_lock(kette)
+
+    assert kette.lock_file.read_bytes() == fremd
+
+
+def test_release_bewahrt_zwischenzeitlich_ersetzten_claim(kette: Settings):
+    writer.write_lock(kette, "Test")
+    eigener_claim = kette.lock_file.read_bytes()
+    assert b"CLAIM-ID:" in eigener_claim
+    fremder_ersatz = b"LOCK -- replacement fixture\nAGENT: other-process\n"
+    kette.lock_file.write_bytes(fremder_ersatz)
+
+    with pytest.raises(writer.WriteError, match="ersetzt oder verändert"):
+        writer.release_lock(kette)
+
+    assert kette.lock_file.read_bytes() == fremder_ersatz
+    assert writer.foreign_locks(kette) == [kette.lock_file]
+
+
+def test_release_ohne_vorhandenen_claim_bleibt_false(kette: Settings):
+    assert writer.release_lock(kette) is False
