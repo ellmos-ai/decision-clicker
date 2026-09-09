@@ -435,7 +435,7 @@ def test_undo_setzt_die_entscheidung_ueber_http_zurueck(server):
     url, kette = server
     ziel = chain.open_entries(chain.build_index(kette))[0]
     pfad = Path(ziel["source_path"])
-    vorher = pfad.read_bytes()
+    vorher = pfad.read_text(encoding="utf-8")
 
     sende(f"{url}/api/decide", {"key": ziel["key"], "choice": "B", "note": "wird rueckgaengig"})
     zwischenstand = chain.find(chain.build_index(kette), ziel["key"])
@@ -447,7 +447,7 @@ def test_undo_setzt_die_entscheidung_ueber_http_zurueck(server):
 
     danach = chain.find(chain.build_index(kette), ziel["key"])
     assert danach["status_class"] == chain.STATUS_OPEN
-    assert DecisionClicker(kette.chain_dir).raw_text(danach).encode("utf-8") in vorher
+    assert DecisionClicker(kette.chain_dir).raw_text(danach) in vorher
 
     _status, verlauf_seite = hole(f"{url}/verlauf")
     assert "zurückgesetzt" in verlauf_seite

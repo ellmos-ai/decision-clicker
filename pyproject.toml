@@ -15,6 +15,9 @@ classifiers = [
   "Environment :: Console",
   "Environment :: Web Environment",
   "Operating System :: OS Independent",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -26,7 +29,12 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/ellmos-ai/decision-clicker"
 Repository = "https://github.com/ellmos-ai/decision-clicker"
+Documentation = "https://github.com/ellmos-ai/decision-clicker#readme"
+Changelog = "https://github.com/ellmos-ai/decision-clicker/blob/master/CHANGELOG.md"
+Security = "https://github.com/ellmos-ai/decision-clicker/blob/master/SECURITY.md"
 Issues = "https://github.com/ellmos-ai/decision-clicker/issues"
+"Parent Organization" = "https://github.com/ellmos-ai"
+"Umbrella Ecosystem" = "https://github.com/open-bricks"
 
 [project.scripts]
 decision-clicker = "decision_clicker.__main__:main"
@@ -48,6 +56,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-ra -v"
 
 [tool.ruff]
 target-version = "py310"
