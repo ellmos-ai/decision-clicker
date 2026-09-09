@@ -1,40 +1,87 @@
-# Security policy
+# Security Policy / Sicherheitsrichtlinie
 
-## Supported versions
+[English](#english) · [Deutsch](#deutsch)
 
-Security fixes are applied to the latest release on the default branch.
+---
 
-## Reporting a vulnerability
+<a name="english"></a>
+## English
 
-Please use GitHub's private vulnerability reporting for this repository. Do
-not include real decision-chain content, credentials, personal paths, or other
-sensitive records in a public issue.
+### Supported Versions
 
-## Deployment boundary
+| Version | Supported          | Security SLA                         |
+|---------|--------------------|--------------------------------------|
+| 1.1.x   | :white_check_mark: | 48h Acknowledgment / 5-Day Triage    |
+| < 1.1.0 | :x:                | Best effort / Update recommended     |
 
-Decision Clicker is a local administrative tool. Its mini server has no
-authentication and is intended only for a trusted user on the same machine.
-The server rejects non-loopback bind addresses. Do not place port 8096 behind
-a LAN, VPN, container, tunnel, or public reverse proxy.
+Security fixes are prioritized for the latest minor release line on the default `master` branch.
 
-Browser writes must present a matching local Host and Origin; cross-site Fetch
-Metadata is rejected. Local JSON automation must also send
-`X-Decision-Clicker: 1`. These checks reduce browser-based attacks; they are
-not remote-user authentication.
+### Reporting a Vulnerability
 
-The configured decision-chain directory may contain sensitive governance
-records. Apply operating-system permissions, storage encryption, and backups
-appropriate to those records. Decision Clicker's own backup directory is not
-a substitute for a system backup.
+If you discover a security vulnerability, please do **NOT** open a public issue. Instead, report it privately via GitHub:
 
-## Security invariants
+- **GitHub Private Advisory:** [Report a Vulnerability](https://github.com/ellmos-ai/decision-clicker/security/advisories/new)
+- **Primary Security Contact:** `security@open-bricks.org`
+- **Organizational Security:** `security@ellmos.ai`
+- **Maintainer Escalation:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
 
-- Foreign `LOCK*.txt` files stop writes.
-- Indexed IDs are rechecked against the target file before writing.
-- Existing decisions are never overwritten.
-- Undo requires a Decision Clicker provenance marker.
-- Scalar fields reject line breaks and multiline context is parser-safe.
-- HTTP request bodies are size-limited.
-- Mutations are serialized inside one process. Separate processes are not
-  coordinated; run only one writer process per decision chain.
-- No telemetry or remote API is included.
+We commit to an initial response acknowledging receipt within **48 hours** and a formal triage assessment within **5 business days**.
+
+### Deployment Boundary & Threat Model
+
+Decision Clicker is a local-first administrative UI and CLI tool:
+1. **Loopback-Only Binding:** The integrated HTTP mini-server strictly binds to `127.0.0.1` or `localhost`. It enforces no remote authentication because it is designed strictly for local operator use. Never expose port `8096` to public networks, LANs, containers, or unsecured reverse proxies.
+2. **Host & Origin Validation:** All mutating HTTP requests (`POST /api/decide`, `POST /api/undo/...`) enforce exact matching of the local `Host` header and browser `Origin`. Cross-site Fetch Metadata is rejected.
+3. **Local JSON Protection:** Programmatic JSON requests require the custom header `X-Decision-Clicker: 1`.
+4. **Non-Elevation / RunAsInvoker:** Decision Clicker executes entirely in user space without requiring root or administrative privileges.
+
+### Core Security & Data Integrity Invariants
+
+- **Fail-Closed Foreign Locks:** Every write operation checks for existing `LOCK*.txt` or active agent locks before modifying files. Any lock immediately halts execution.
+- **Single Data Canon:** The file-based decision chain (`TO-DECIDE-USER.txt`) remains the sole authority. Rebuilt Markdown or JSON indexes are disposable caches.
+- **No Overwriting:** Existing decisions are never overwritten; only placeholder fields can be updated.
+- **Byte-Preserving Backups:** A byte-for-byte pre-write backup is created before any mutation.
+- **Provenance-Guarded Reversible Undo:** Undo operations verify Decision Clicker provenance markers and log reset events to an append-only audit trail.
+- **Zero-Egress Privacy:** No external network requests, analytics, or telemetry are ever performed.
+
+---
+
+<a name="deutsch"></a>
+## Deutsch
+
+### Unterstützte Versionen
+
+| Version | Unterstützt        | Sicherheits-SLA                      |
+|---------|--------------------|--------------------------------------|
+| 1.1.x   | :white_check_mark: | 48h Eingangsbestätigung / 5 Tage Triage |
+| < 1.1.0 | :x:                | Nach Verfügbarkeit / Update empfohlen |
+
+Sicherheitskorrekturen werden für die neueste Version auf dem Standard-Branch `master` bereitgestellt.
+
+### Sicherheitslücke melden
+
+Bitte melden Sie Sicherheitslücken **niemals** über öffentliche GitHub Issues. Nutzen Sie stattdessen:
+
+- **GitHub Private Vulnerability Advisory:** [Sicherheitslücke privat melden](https://github.com/ellmos-ai/decision-clicker/security/advisories/new)
+- **Zentrale Sicherheit:** `security@open-bricks.org`
+- **Organisationskontakt:** `security@ellmos.ai`
+- **Maintainer:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
+
+Wir garantieren eine Eingangsbestätigung innerhalb von **48 Stunden** sowie eine fundierte Triage-Rückmeldung innerhalb von **5 Werktagen**.
+
+### Schutzgrenzen & Sicherheitsmodell
+
+Decision Clicker ist ein lokales Administrationswerkzeug:
+1. **Strikte Loopback-Bindung:** Der integrierte HTTP-Miniserver bindet ausschließlich an `127.0.0.1` oder `localhost`. Der Port darf niemals im LAN, WAN, Container-Netzwerk oder über ungeschützte Reverse-Proxys exponiert werden.
+2. **Host- & Origin-Validierung:** Alle mutierenden HTTP-Endpunkte prüfen strikt übereinstimmende lokale `Host`- und `Origin`-Header. Cross-Origin Fetch-Metadaten werden abgewiesen.
+3. **Automationsschutz:** Programmatische JSON-Anfragen erfordern den Header `X-Decision-Clicker: 1`.
+4. **Unprivilegierter Betrieb (RunAsInvoker):** Das Tool erfordert keinerlei Administrator- oder Root-Rechte.
+
+### Sicherheits- und Datenintegritäts-Invarianten
+
+- **Fail-Closed bei externen Sperren:** Vor jedem Schreibzugriff wird auf `LOCK*.txt` und aktive Sperren geprüft. Bei Fund bricht das Tool ab.
+- **Einziger Datenkanon:** Die Textdatei `TO-DECIDE-USER.txt` bleibt der alleinige Kanon. Generierte Index-Dateien sind weggreifbare Caches.
+- **Kein Überschreiben:** Bereits getroffene Entscheidungen werden niemals überschrieben.
+- **Byte-getreue Vorab-Sicherung:** Vor jeder Kettendatei-Mutation wird ein byte-identisches Backup angelegt.
+- **Reversibles Undo mit Herkunftsnachweis:** Undo erfordert einen Nachweis, dass der Block durch Decision Clicker erzeugt wurde; die Rücksetzung wird im unveränderlichen Audit-Trail protokolliert.
+- **Zero-Egress Datenschutz:** Keinerlei Telemetrie, Analytics oder ausgehende Netzwerkverbindungen.

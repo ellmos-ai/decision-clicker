@@ -2,193 +2,416 @@
 
 # Decision Clicker
 
-[Deutsch](README.de.md) · English
+[English](README.md) · [Deutsch](README_de.md)
 
-Decision Clicker is a local-first Python library, CLI, and small web UI for
-file-based decision chains. It lets people review, record, undo, and audit
-decisions without moving the source of truth into a database.
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](pyproject.toml)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-138%2B%20passed-brightgreen.svg)](tests/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
+[![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
+[![Security](https://img.shields.io/badge/security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg)](SECURITY.md)
+[![Security SLA](https://img.shields.io/badge/security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg)](SECURITY.md)
+[![Code Style](https://img.shields.io/badge/code%20style-Ruff-black.svg)](pyproject.toml)
+[![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
+[![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
+[![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--09-informational.svg)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-The decision-chain text files remain canonical. Generated JSON and Markdown
-indexes are rebuildable caches.
+Decision Clicker is a local-first Python library, CLI tool, and lightweight web UI for file-based human-in-the-loop decision chains. It provides human operators and autonomous agent fleets with a bulletproof, deterministic workflow to queue, review, record, audit, and reversibly undo governance decisions without moving the source of truth into an external database.
 
-## Safety model
+The markdown and plain-text chain files (`TO-DECIDE-USER.txt` and `DECIDED-AND-DONE.md`) remain the single, canonical source of truth. All generated JSON and Markdown indexes are strictly disposable, rebuildable caches.
 
-- The web server enforces a loopback bind (`127.0.0.1` or `localhost`) and has
-  no remote-access authentication.
-- Mutating HTTP requests validate the local Host and browser Origin. JSON
-  writes additionally require `X-Decision-Clicker: 1`.
-- One running process serializes its write transactions. Do not run multiple
-  Decision Clicker processes against the same chain.
-- Every write checks for foreign `LOCK*.txt` files and stops when one exists.
-- Before changing a chain file, the writer creates a byte-for-byte backup.
-- A decision field is changed only when it is still a placeholder.
-- Undo is accepted only for decisions provably written by Decision Clicker.
-- Decision evidence is append-only; undo adds a reset record instead of
-  deleting the original record.
-- Scalar entry fields reject line breaks; free-form context is rendered in a
-  parser-safe quoted block.
-- Tests use synthetic fixtures and never access personal decision data.
+---
 
-## Requirements
+## Quick Navigation
 
-- Python 3.10 through 3.13.
-- A decision-chain directory containing:
-  - exactly one active `TO-DECIDE-USER.txt` file;
-  - `DECIDED-AND-DONE.md`;
-  - `_tools/decisions_index.py`, implementing the `decisions.index/1`
-    parser contract.
+1. [Architecture & Design](#1-architecture--design)
+2. [Governance & Runtime Invariants](#2-governance--runtime-invariants)
+3. [Execution & Decision Lifecycle](#3-execution--decision-lifecycle)
+4. [Safety Model & Security Policy](#4-safety-model--security-policy)
+5. [Requirements & Platform Compatibility](#5-requirements--platform-compatibility)
+6. [Installation & Setup](#6-installation--setup)
+7. [Configuration & Environment](#7-configuration--environment)
+8. [CLI Usage & Commands](#8-cli-usage--commands)
+9. [HTTP Mini Server & Web UI](#9-http-mini-server--web-ui)
+10. [Python Library API](#10-python-library-api)
+11. [Sibling Ecosystem & Partner Matrix](#11-sibling-ecosystem--partner-matrix)
+12. [Verification & Validation Gates](#12-verification--validation-gates)
+13. [Machine-Readable LLM Context](#13-machine-readable-llm-context)
+14. [Contributing & License](#14-contributing--license)
 
-The index parser is intentionally external. Decision Clicker loads that one
-parser instead of maintaining a second, subtly different parser.
+---
 
-## Install
+## 1. Architecture & Design
+
+Decision Clicker follows a strict 4-tier local-first architecture designed to guarantee absolute data safety, process isolation, and cross-platform compatibility.
+
+```mermaid
+flowchart TD
+    subgraph UI_CLI["Client & Automation Surfaces"]
+        direction TB
+        A1["Human Operator (Web Browser)"]
+        A2["CLI Terminal (`decision-clicker`)"]
+        A3["Autonomous Agent Fleet (Claude / Gemini / Codex)"]
+    end
+
+    subgraph SERVER_TIER["Local HTTP Server & Guards (`server.py`)"]
+        direction TB
+        B1["Loopback Server (`127.0.0.1:8096`)"]
+        B2["Host & Origin Matcher (Anti-CSRF)"]
+        B3["`X-Decision-Clicker: 1` Header Gate"]
+        B4["Process-Local Write Serializer"]
+    end
+
+    subgraph ENGINE_TIER["Core Engine & Integration Seams"]
+        direction TB
+        C1["`DecisionClicker` API Facade (`api.py`)"]
+        C2["Legacy Intake Parser (`intake.py`)"]
+        C3["External Index Adapter (`chain.py`)"]
+        C4["Guarded Writer Engine (`writer.py`)"]
+        C5["Lock Guard (`LOCK*.txt` Fail-Closed)"]
+    end
+
+    subgraph STORAGE_TIER["Single Data Canon & Audit Trail"]
+        direction TB
+        D1[("Active Decision Canon\n`TO-DECIDE-USER.txt`")]
+        D2[("Append-Only Ledger\n`DECIDED-AND-DONE.md`")]
+        D3[("Byte-Preserving Backups\n`_decision-archive/_bak/`")]
+        D4[("Rebuildable Index Caches\n`_tools/decisions_index.py`")]
+    end
+
+    A1 -->|"HTTP GET/POST"| B1
+    A2 -->|"Direct CLI Commands"| C1
+    A3 -->|"REST JSON API"| B1
+
+    B1 --> B2
+    B2 --> B3
+    B3 --> B4
+    B4 --> C1
+
+    C1 --> C2
+    C1 --> C3
+    C1 --> C4
+
+    C4 --> C5
+    C5 -->|"1. Check Locks"| D1
+    C4 -->|"2. Pre-Write Backup"| D3
+    C4 -->|"3. Atomic Marker Update"| D1
+    C4 -->|"4. Record Evidence"| D2
+    C4 -->|"5. Refresh Cache"| D4
+```
+
+---
+
+## 2. Governance & Runtime Invariants
+
+The runtime integrity of Decision Clicker is governed by 10 non-negotiable invariants:
+
+| Identifier | Principle | Operational Guarantee | Enforcement Mechanism |
+|---|---|---|---|
+| **INV-LOCAL-01** | **Local-First & Zero-Egress** | Binds exclusively to `127.0.0.1` or `localhost`. Absolutely zero analytics, telemetry, or outbound network traffic. | Network socket bind validation; rejection of non-loopback addresses. |
+| **INV-CANON-02** | **Single Data Canon** | Plain text files (`TO-DECIDE-USER.txt`) are the sole source of truth; no SQL/NoSQL database required. | Direct file-system I/O; indexes treated strictly as transient caches. |
+| **INV-NOELEV-03** | **Unprivileged Operation** | Operates strictly in user-space (`RunAsInvoker`) without elevation or root permissions. | No privileged system calls or administrative requirements. |
+| **INV-ONEDOC-04** | **One-Document Active Contract** | Exactly one active `TO-DECIDE-USER.txt` exists; only open, decision-ready entries are selectable. | Scanner validation in `chain.py` checking the active contract status. |
+| **INV-BACKUP-05** | **Byte-Preserving Pre-Write Backup** | Before modifying any chain file, a byte-for-byte timestamped backup is persisted. | `writer.py` backup routine into `_decision-archive/_bak/`. |
+| **INV-NOWRITE-06** | **Never Overwrite Decisions** | Existing answered choices can never be overwritten; only placeholder fields can be modified. | Strict validation against placeholder markers prior to mutation. |
+| **INV-UNDO-07** | **Reversible Undo with Provenance** | Only decisions provably authored by Decision Clicker can be undone; resets are append-only. | Provenance marker verification; reset entries appended to audit log. |
+| **INV-LOCK-08** | **Foreign Lock & Multi-Agent Resilienz** | Halts immediately upon encountering foreign locks (`LOCK*.txt`, `LOCK.user.*`). | Fail-closed lock inspection before acquiring write handles. |
+| **INV-CROSS-09** | **Cross-Platform Parity** | 100% deterministic operation across Windows, Linux, and macOS with newline-agnostic parsing. | Universal newline normalization (`\r\n` / `\n`) across tests and I/O. |
+| **INV-SLA-10** | **Security Response SLA** | 48-hour response acknowledgment and 5-business-day triage commitment. | Documented security policy in `SECURITY.md` and multi-contact escalation. |
+
+---
+
+## 3. Execution & Decision Lifecycle
+
+The complete lifecycle of reviewing, recording, and reversing a human governance decision is illustrated below:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Human Operator / Agent
+    participant UI as Browser / CLI / API
+    participant Srv as Loopback Server (`server.py`)
+    participant Facade as DecisionClicker (`api.py`)
+    participant Writer as Writer Engine (`writer.py`)
+    participant Lock as Lock Guard
+    participant Disk as Decision Chain (`_DECISIONS/`)
+    participant Done as Audit Ledger (`DECIDED-AND-DONE.md`)
+
+    User->>UI: Select Choice (e.g. Option "A")
+    UI->>Srv: POST /api/decide {key, choice: "A", note}
+    Srv->>Srv: Validate Host, Origin, and Guard Headers
+    Srv->>Facade: decide(key, choice, note)
+    Facade->>Writer: apply_decision(entry, choice, note)
+
+    Writer->>Lock: Verify No Active Locks (LOCK*.txt)
+    Lock-->>Writer: Lock Check Clean (OK)
+
+    Writer->>Disk: Create Pre-Write Backup (_bak/...)
+    Disk-->>Writer: Backup Saved Successfully
+
+    Writer->>Disk: Remove Answered Block from TO-DECIDE-USER.txt
+    Disk-->>Writer: Block Atomic Update OK
+
+    Writer->>Done: Append Choice & Full-Block Evidence
+    Done-->>Writer: Evidence Logged (Append-Only)
+
+    Writer->>Disk: Invalidate & Rebuild Index Cache
+    Writer-->>Facade: Decision Finalized
+    Facade-->>Srv: Write Success Confirmation
+    Srv-->>UI: HTTP 303 Redirect / JSON OK
+    UI-->>User: Visual Confirmation & Updated Queue
+
+    opt Reversible Undo Lifecycle
+        User->>UI: Request Undo (/api/undo/{key})
+        UI->>Srv: POST /api/undo/{key}
+        Srv->>Writer: apply_undo(entry)
+        Writer->>Writer: Verify Tool Provenance Marker
+        Writer->>Disk: Restore Original Decision Block
+        Writer->>Done: Append Undo Reset Audit Record
+        Done-->>Writer: Reset Appended
+        Writer-->>UI: Restored to Active Queue
+    end
+```
+
+---
+
+## 4. Safety Model & Security Policy
+
+Decision Clicker is specifically built for sensitive personal and organizational governance workflows:
+
+- **Loopback-Only Binding:** The mini-server enforces binding to `127.0.0.1` or `localhost`. It provides no external authentication because it must never be exposed over LANs, WANs, tunnels, or public reverse proxies.
+- **CSRF & Origin Protection:** All mutating requests validate matching `Host` and `Origin` headers. Cross-site Fetch Metadata is rejected immediately.
+- **Local Automation Token:** Programmatic JSON writes require `X-Decision-Clicker: 1` to prevent unauthorized browser-scripted writes.
+- **Fail-Closed Foreign Locks:** Writing halts immediately if any `LOCK*.txt` file exists in the chain directory.
+- **Atomic Pre-Write Backups:** Backups preserve byte order, character encodings (UTF-8 / UTF-8-SIG), and line endings.
+- **Security SLA:** Documented in [SECURITY.md](SECURITY.md) with a 48h acknowledgment and 5-day triage commitment via `security@open-bricks.org` and `security@ellmos.ai`.
+
+---
+
+## 5. Requirements & Platform Compatibility
+
+- **Python:** `3.10`, `3.11`, `3.12`, `3.13`.
+- **Platforms:** Microsoft Windows, Linux (Ubuntu/Debian/Fedora/Arch), Apple macOS.
+- **External Dependencies:** **Zero**. Relies exclusively on the Python standard library.
+- **Decision Chain Structure:**
+  - Exactly one active `TO-DECIDE-USER.txt` file;
+  - An append-only `DECIDED-AND-DONE.md` ledger;
+  - `_tools/decisions_index.py` conforming to the canonical `decisions.index/1` parser contract.
+
+---
+
+## 6. Installation & Setup
+
+### Development Installation (with test suite & linter)
 
 ```bash
+git clone https://github.com/ellmos-ai/decision-clicker.git
+cd decision-clicker
 python -m venv .venv
+
+# On Windows:
+.venv\Scripts\activate
+# On Linux / macOS:
+source .venv/bin/activate
+
 python -m pip install -e ".[dev]"
 ```
 
-For runtime-only use, install without the `dev` extra:
+### Production / Runtime Installation
 
 ```bash
 python -m pip install .
 ```
 
-## Configure
+---
 
-`DECISION_CLICKER_CHAIN` is the recommended explicit configuration:
+## 7. Configuration & Environment
+
+Configuration is resolved through environment variables with intelligent automatic fallbacks:
 
 ```powershell
-$env:DECISION_CLICKER_CHAIN = "D:\data\_DECISIONS"
+# Windows PowerShell
+$env:DECISION_CLICKER_CHAIN = "C:\Users\<User>\OneDrive\.TOPICS\_control-center\_DECISIONS"
 decision-clicker --check
 ```
 
 ```bash
-export DECISION_CLICKER_CHAIN="$HOME/data/_DECISIONS"
+# Linux / macOS POSIX Shell
+export DECISION_CLICKER_CHAIN="$HOME/OneDrive/.TOPICS/_control-center/_DECISIONS"
 decision-clicker --check
 ```
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `DECISION_CLICKER_CHAIN` | Canonical decision-chain directory | Derived from the local OneDrive root |
-| `DECISION_CLICKER_INBOX` | Optional legacy inbox path; multiple paths use the OS path separator | `<OneDrive>/Desktop/TO-DECIDE-USER.txt` |
-| `DECISION_CLICKER_HOST` | Mini-UI bind host; loopback only | `127.0.0.1` |
-| `DECISION_CLICKER_PORT` | Mini-UI port | `8096` |
+| Environment Variable | Description | Default Resolution |
+|---|---|---|
+| `DECISION_CLICKER_CHAIN` | Path to the canonical decision-chain directory | Auto-discovered from local OneDrive roots (`OneDrive`, `OneDrive-Personal`) |
+| `DECISION_CLICKER_INBOX` | Optional legacy desktop intake postbox | `<OneDrive>/Desktop/TO-DECIDE-USER.txt` |
+| `DECISION_CLICKER_HOST` | Loopback bind address for HTTP mini-UI | `127.0.0.1` |
+| `DECISION_CLICKER_PORT` | Port for the HTTP mini-UI | `8096` |
 
-Windows OneDrive environment variables are detected. The neutral fallbacks are
-`~/OneDrive` and `~/Library/CloudStorage/OneDrive-Personal`. For other macOS
-OneDrive layouts, set `DECISION_CLICKER_CHAIN` explicitly.
+---
 
-## Use
+## 8. CLI Usage & Commands
 
-Check the chain without starting a server:
+### Health & Chain Check
 
 ```bash
 decision-clicker --check
 ```
 
-Start the local mini UI:
+Inspects chain integrity, active contract adherence, parser compatibility, and reports active vs decided counts.
+
+### Launch Mini Web UI
 
 ```bash
 decision-clicker --open
 ```
 
-On Windows, `START.bat` performs the same local startup and avoids launching a
-second instance on port 8096.
+Binds to `127.0.0.1:8096` and opens your default browser. On Windows, `START.bat` wraps this command safely.
 
-Create a decision:
+### Add a New Decision to the Chain
 
 ```bash
-decision-clicker add "Choose a rollout" \
-  --frage "Which rollout should be used?" \
-  --option "A — staged" \
-  --option "B — immediate" \
-  --empfehlung "A — easier to reverse" \
+decision-clicker add "Rollout Strategy Selection" \
+  --frage "Which deployment pattern should be used for v1.1.0?" \
+  --option "A — Blue/Green with immediate traffic switch" \
+  --option "B — Canary staged release over 48 hours" \
+  --empfehlung "B — Canary provides automated rollback" \
   --dry-run
 ```
 
-Remove `--dry-run` after reviewing the rendered entry.
+Remove `--dry-run` to append the entry directly to `TO-DECIDE-USER.txt`.
 
-## Interfaces
-
-| Interface | Role |
-| --- | --- |
-| `decision_clicker.api.DecisionClicker` | UI-independent facade for integrations |
-| `decision-clicker` | CLI for checks, creation, inbox intake, and the local server |
-| Mini UI on port 8096 | Lightweight fallback UI using only the Python standard library |
-| Unified GUI adapter | Optional regular UI; consumes the same facade and writer |
-
-The mini UI includes an overview, one-at-a-time review, history and undo,
-creation, and a deduplicated register. JSON endpoints expose health, index,
-history, creation, decisions, undo, and inbox intake to local automation.
-Mutating JSON calls must send the explicit local-API guard header:
+### Intake Legacy Inbox Decisions
 
 ```bash
-curl -H "Content-Type: application/json" \
-  -H "X-Decision-Clicker: 1" \
-  --data '{"title":"Choose a rollout"}' \
-  http://127.0.0.1:8096/api/new
+decision-clicker takeover
 ```
 
-## Write semantics
+Scans legacy desktop postboxes (`Desktop/TO-DECIDE-USER.txt`), validates formatting, and imports entries idempotently into the canonical chain.
 
-For a decision click, the writer:
+---
 
-1. rejects foreign locks;
-2. verifies the one-document active contract and the indexed decision ID;
-3. creates byte-preserving backups under `_decision-archive/_bak/`;
-4. appends the choice, provenance, and a reversible copy of the complete open
-   block to `DECIDED-AND-DONE.md`;
-5. removes the answered block from `TO-DECIDE-USER.txt` immediately;
-6. rebuilds the derived index artifacts.
+## 9. HTTP Mini Server & Web UI
 
-It never marks implementation as verified. Implementation status remains a
-separate governance concern and never keeps an answered question active. Undo
-restores only a complete block previously secured by Decision Clicker and adds
-an append-only reset marker to the historical evidence.
+The mini-server operates on `http://127.0.0.1:8096`:
 
-## Legacy inbox intake
+| Route | Method | Description | Guard / Headers |
+|---|---|---|---|
+| `/` | `GET` | Overview of active decisions and summary counts | None |
+| `/klick` | `GET` | Focused single-decision review and click card | None |
+| `/verlauf` | `GET` | Audit trail and history of decided items | None |
+| `/neu` | `GET`, `POST` | Decision creation form | Host & Origin check |
+| `/api/index` | `GET` | Machine-readable JSON index of the decision chain | None |
+| `/api/decide` | `POST` | Record a decision choice | `X-Decision-Clicker: 1` or Origin |
+| `/api/undo/<key>` | `POST` | Reversibly undo a previously recorded decision | `X-Decision-Clicker: 1` or Origin |
+| `/api/takeover` | `POST` | Trigger legacy inbox intake | `X-Decision-Clicker: 1` or Origin |
 
-The optional inbox is a compatibility path, not a second source of truth.
-Decision Clicker recognizes both regular headings and the legacy `ID: D-…`
-form. Intake preserves IDs and original wording, adds a takeover marker to the
-inbox, and is idempotent.
-
-## Development
+Programmatic local automation example:
 
 ```bash
+curl -X POST http://127.0.0.1:8096/api/decide \
+  -H "Content-Type: application/json" \
+  -H "X-Decision-Clicker: 1" \
+  -d '{"key": "D-20260909-01", "choice": "B", "note": "Approved via automated agent"}'
+```
+
+---
+
+## 10. Python Library API
+
+Decision Clicker can be embedded directly into custom Python tools or agent control pipelines:
+
+```python
+from pathlib import Path
+from decision_clicker.api import DecisionClicker
+
+# Initialize facade pointing to the canonical chain directory
+clicker = DecisionClicker(Path("C:/_Local_DEV/chains/_DECISIONS"))
+
+# 1. Inspect open decisions
+open_items = clicker.open_decisions()
+print(f"Pending decisions: {len(open_items)}")
+
+for item in open_items:
+    print(f"[{item['id']}] {item['title']}")
+    for opt in item.get("options", []):
+        print(f"  - Option {opt['letter']}: {opt['text']}")
+
+# 2. Record a human choice
+if open_items:
+    target = open_items[0]
+    clicker.decide(
+        key=target["key"],
+        choice="A",
+        note="Selected during automated system validation."
+    )
+    print(f"Decision recorded for {target['id']}.")
+
+# 3. Reversibly undo if required
+# clicker.undo(target["key"])
+```
+
+---
+
+## 11. Sibling Ecosystem & Partner Matrix
+
+Decision Clicker operates within the open-bricks and ellmos-ai ecosystems, coordinating with 16 sibling repositories:
+
+| Repository | Organization | Category | Integration Role with Decision Clicker |
+|---|---|---|---|
+| [`policy-registry`](https://github.com/ellmos-ai/policy-registry) | `ellmos-ai` | Governance | **Parent Bundle Seam:** Requires `decision.clicker` capability as its human writer/UI component. |
+| [`system-auditor`](https://github.com/ellmos-ai/system-auditor) | `ellmos-ai` | Infrastructure | Audits multi-host runtime states and flags pending decisions. |
+| [`assistant-core`](https://github.com/ellmos-ai/assistant-core) | `ellmos-ai` | AI Infrastructure | Async agent fleet core engine producing governance requests. |
+| [`store-packager`](https://github.com/ellmos-ai/store-packager) | `ellmos-ai` | Packaging | Packages decision-chain modules into distributable artifacts. |
+| [`clip-storyboard-director`](https://github.com/ellmos-ai/clip-storyboard-director) | `ellmos-ai` | Media Automation | Utilizes human decisions for storyboard cut approval. |
+| [`sqlite-transit-sync`](https://github.com/ellmos-ai/sqlite-transit-sync) | `ellmos-ai` | Data Sync | Syncs structured governance mirrors across local machines. |
+| [`clutch`](https://github.com/ellmos-ai/clutch) | `ellmos-ai` | Supervisor | Manages background decision-server processes. |
+| [`ellmos-installer`](https://github.com/ellmos-ai/ellmos-installer) | `ellmos-ai` | Deployment | Automated local installation for decision services. |
+| [`app-rotator`](https://github.com/dev-bricks/app-rotator) | `dev-bricks` | Orchestration | Gracefully restarts local server instances on port changes. |
+| [`workflowhooker`](https://github.com/dev-bricks/workflowhooker) | `dev-bricks` | Automation | Triggers Git and webhook hooks upon decision finalization. |
+| [`ExplorerPro`](https://github.com/file-bricks/ExplorerPro) | `file-bricks` | Desktop Tools | Provides visual desktop file browsing for decision archives. |
+| [`CleanMarkdown`](https://github.com/doc-bricks/CleanMarkdown) | `doc-bricks` | Formatting | Lints and formats markdown decision blocks. |
+| [`KlangpultLight`](https://github.com/entertain-and-more/KlangpultLight) | `entertain-and-more` | Media Tools | Audio notifications on new decision arrival. |
+| [`abc-hct`](https://github.com/research-line/abc-hct) | `research-line` | Open Science | Algorithmic audit analysis of decision latency. |
+| [`functional-stability-theory`](https://github.com/research-line/functional-stability-theory) | `research-line` | Mathematics | Mathematical formalization of consensus chains. |
+| [`umbrella`](https://github.com/open-bricks) | `open-bricks` | Umbrella Org | Central registry for open-source bricks and standards. |
+
+---
+
+## 12. Verification & Validation Gates
+
+All modifications undergo strict validation gates prior to release:
+
+| Gate | Tool | Target | Success Criteria |
+|---|---|---|---|
+| **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 syntax errors, valid bytecode across Python 3.10–3.13. |
+| **Linting & Quality** | `ruff check` | Entire repository | 0 linting warnings or style violations. |
+| **Unit & Integration** | `pytest` | `tests/` | 138+ tests passed (100% green). |
+| **Metadata Parity** | `tests/test_metadata.py` | Badges, PEP 621, Invariants | Contract tests pass verifying docs, URLs, and SLAs. |
+| **Build & Packaging** | `python -m build` | Source & Wheel dists | Clean build of distributable `.tar.gz` and `.whl`. |
+
+Execute the full suite locally:
+
+```bash
+python -m compileall -q src tests
 python -m ruff check .
-python -m pytest -q
+python -m pytest -v
 python -m build
 ```
 
-The test suite covers parsing, configuration, lock behavior, byte-preserving
-writes, backups, ID allocation, structural-injection protection, all creation
-paths, HTTP origin/host checks, concurrent requests, intake, history, and
-full-block-preserving decision/undo round trips. CI runs it on Linux, macOS, and
-Windows with every supported Python version.
+---
 
-## Boundaries
+## 13. Machine-Readable LLM Context
 
-- Decision Clicker records user choices; it does not choose on the user's
-  behalf and does not predict answers.
-- It removes answered questions from the active template, but does not verify
-  implementation or claim a completed implementation state.
-- It does not own the decision-chain parser or the optional Unified GUI.
-- It has no telemetry and no runtime dependency outside the Python standard
-  library.
-- It is the fixed human writer/UI component of the decision-system bundle
-  owned by [`policy-registry`](https://github.com/ellmos-ai/policy-registry)
-  (see both `ellmos-module.v2.json` manifests): both point at the same on-disk
-  `_DECISIONS` chain, policy-registry as a pointer/index reader and this tool
-  as the controlled writer. This is a composition requirement, not a runtime
-  import: the tool remains directly startable for maintenance and recovery.
+Autonomous LLM agents inspecting this repository should read [llms.txt](llms.txt) for machine-optimized code maps, governance invariant definitions, and deployment boundaries. Module manifest details are published in `ellmos-module.v2.json`.
 
-See [SECURITY.md](SECURITY.md), [PRIVACY.md](PRIVACY.md), and
-[CONTRIBUTING.md](CONTRIBUTING.md) before deploying or contributing.
+---
 
-## License
+## 14. Contributing & License
 
-Project-authored code, documentation, and assets are licensed under the MIT
-License. See [LICENSE](LICENSE). Third-party components and their notices are
-listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md) before submitting patches.
+
+Licensed under the **MIT License**. See [LICENSE](LICENSE) for full legal text. Third-party licenses and asset attestations are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

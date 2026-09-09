@@ -3,8 +3,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+# Test, coverage, and packaging artifacts
 .coverage
 htmlcov/
+coverage/
+wheelhouse/
+.wheel-smoke/
 build/
 dist/
 .venv/
@@ -17,6 +21,25 @@ venv/
 .DS_Store
 Thumbs.db
 _local/
+*.tmp
+*.bak
+*.swp
+*~
+*.log
+
+# Multi-host sync conflicts (OneDrive / Syncthing / Cloud sync)
+*-conflict-*
+*.sync-conflict-*
+*.sync-temp-*
+*.conflict
+*-CONFLIT-*
+
+# Multi-agent locks (fail-closed concurrency governance)
+LOCK
+LOCK.*
+*.lock
+LOCK*.txt
+LOCK.permissions.json
 
 # Legacy real-data fixture retained on some maintainer systems; never track.
 tests/data/postfach_2026-08-07.txt

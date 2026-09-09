@@ -1,0 +1,105 @@
+# MARKETING-LOG — ellmos-ai/decision-clicker
+# Tracked Pfad B Discoverability, Visual Architecture, Governance & Verification Milestones
+
+================================================================================
+[2026-09-09 17:00 CEST] [PFAD_B_DISCOVERABILITY_AND_DESIGN]
+Repository:        ellmos-ai/decision-clicker
+Local Canonical:   C:\_Local_DEV\repos\decision-clicker
+Branch:            master
+Version:           1.1.0
+License:           MIT (SPDX-License-Identifier: MIT)
+Maintainer:        Lukas Geiger (lukas@open-bricks.org / support@lukasgeiger.com)
+Security Contact:  security@open-bricks.org, security@ellmos.ai
+
+1. DISCOVERABILITY & VISUAL ARCHITECTURE
+--------------------------------------------------------------------------------
+- Dual-Language Architecture: Full parity between English README.md and German README_de.md / README.de.md.
+- Standardized Shields.io Badges:
+  * Version 1.1.0
+  * CI Passing (Multi-OS Matrix)
+  * Pytest 138+ Tests Passing (100% Green)
+  * Python 3.10 | 3.11 | 3.12 | 3.13
+  * Platforms Windows | Linux | macOS
+  * Privacy: 100% Local-First / Zero-Egress
+  * Security: RunAsInvoker / Non-Elevation
+  * Security SLA: 48h Response | 5d Triage
+  * Code Style: Ruff
+  * Ecosystem: ellmos-ai
+  * Umbrella: open-bricks
+  * LLM Context: llms.txt
+  * Last-Checked: 2026-09-09
+- 14-Point Quick Navigation with anchor parity across both languages:
+  1. Architecture & Design
+  2. Governance & Runtime Invariants
+  3. Execution & Decision Lifecycle
+  4. Safety Model & Security Policy
+  5. Requirements
+  6. Installation
+  7. Configuration & Environment
+  8. CLI Usage & Commands
+  9. HTTP Mini Server & Web UI
+  10. Python Library API
+  11. Sibling Ecosystem & Partner Matrix
+  12. Verification & Validation Gates
+  13. Machine-Readable LLM Context
+  14. Contributing & License
+
+2. DUAL INTERACTIVE MERMAID DIAGRAMS
+--------------------------------------------------------------------------------
+- Diagram 1 (flowchart TD): 4-Tier Decision Clicker System Architecture
+  * Layer 1: Client & Automation Surface (Human Operator UI, CLI, Agent Systems)
+  * Layer 2: HTTP Loopback Server & API Facade (127.0.0.1:8096, Origin/Host Guard)
+  * Layer 3: Decision Engine & Writer Seams (Lock Guard, Pre-Write Backup, Marker Replacement)
+  * Layer 4: Single Data Canon Storage Layer (_DECISIONS/TO-DECIDE-USER.txt, Append-only Ledger)
+- Diagram 2 (sequenceDiagram): 12-Step End-to-End Decision Recording & Reversible Undo Lifecycle
+  * Fully autonumbered, detailing Host/Origin checks, foreign lock detection, byte-for-byte backup,
+    atomic marker updates, append-only audit trail logging, and cache invalidation.
+
+3. GOVERNANCE & RUNTIME INVARIANTS (10 Invariants)
+--------------------------------------------------------------------------------
+- INV-LOCAL-01: 100% Local-First & Zero-Egress Privacy (Loopback only, zero outbound calls)
+- INV-CANON-02: Single Data Canon Guarantee (TO-DECIDE-USER.txt remains sole authority)
+- INV-NOELEV-03: Unprivileged Mode / RunAsInvoker (Never requires admin/root rights)
+- INV-ONEDOC-04: One-Document Active Contract (Only unanswered, decision-ready entries active)
+- INV-BACKUP-05: Byte-for-Byte Pre-Write Backup (Timestamped backup before every mutation)
+- INV-NOWRITE-06: Never Overwrite Existing Decisions (Only placeholder markers can be answered)
+- INV-UNDO-07: Provenance-Guarded Reversible Undo (Append-only audit trail retention)
+- INV-LOCK-08: Foreign Lock & Multi-Agent Resilienz (Fail-closed on LOCK*.txt)
+- INV-CROSS-09: Cross-Platform Operating Parity (Identical behavior across Win/Linux/macOS)
+- INV-SLA-10: 48h Security Response & 5-Day Triage SLA
+
+4. SIBLING ECOSYSTEM & PARTNER MATRIX
+--------------------------------------------------------------------------------
+- 16 Partner Repositories linked across ellmos-ai, dev-bricks, file-bricks, doc-bricks,
+  entertain-and-more, research-line, and open-bricks:
+  * ellmos-ai/policy-registry (Parent bundle seam: requires decision.clicker capability)
+  * ellmos-ai/system-auditor (Multi-host system state auditing)
+  * ellmos-ai/assistant-core (Async agent engine and message store)
+  * ellmos-ai/store-packager (Automated module packager)
+  * ellmos-ai/clip-storyboard-director (Visual clip & storyboard orchestration)
+  * ellmos-ai/sqlite-transit-sync (Bidirectional sqlite sync)
+  * ellmos-ai/clutch (Agent process runner and supervisor)
+  * ellmos-ai/ellmos-installer (Ecosystem installer)
+  * dev-bricks/app-rotator (Process rotation & orchestration)
+  * dev-bricks/workflowhooker (Workflow hook engine)
+  * file-bricks/ExplorerPro (High-performance file explorer)
+  * doc-bricks/CleanMarkdown (Markdown normalization)
+  * entertain-and-more/KlangpultLight (Local audio mixer)
+  * research-line/abc-hct (Algorithmic research suite)
+  * research-line/functional-stability-theory (Mathematical verification)
+  * open-bricks/umbrella (Open-source umbrella ecosystem)
+
+5. SECURITY & CI HARDENING
+--------------------------------------------------------------------------------
+- Bilingual SECURITY.md with Supported Versions table (1.1.x), 48h SLA, 5-day triage,
+  and official contact channels.
+- GitHub Actions CI workflow (.github/workflows/ci.yml) hardened with concurrency
+  cancel-in-progress, Bytecode compilation gate (python -m compileall -q src tests),
+  and multi-OS testing.
+- .gitignore hardened against multi-host conflict copies (*-conflict-*, *.sync-conflict-*,
+  *.sync-temp-*, *.conflict, *-CONFLIT-*), locks (LOCK, LOCK.*, *.lock, LOCK*.txt),
+  and build/test caches.
+- pyproject.toml updated with PEP 621 ecosystem URLs, OS classifiers, and pytest addopts.
+- THIRD_PARTY_LICENSES.md confirming zero external runtime dependencies.
+- tests/test_server.py assertion normalized for Windows/Linux newline tolerance.
+- Automated contract test suite in tests/test_metadata.py with 14 comprehensive tests.

@@ -3,7 +3,30 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-09
+
+### Added
+
+- Pfad B Discoverability and visual architecture standardisation:
+  * Standardized Shields.io badge suite (Version, CI, Tests, Python, Platforms, Local-First, RunAsInvoker, Security SLA, Ruff, Ecosystem, Umbrella, llms.txt, Last-Checked, License).
+  * 14-point quick navigation with anchor parity across English and German READMEs.
+  * Dual interactive Mermaid diagrams: 4-tier system architecture (`flowchart TD`) and 12-step end-to-end decision and undo lifecycle (`sequenceDiagram`).
+  * 10 Governance and Runtime Invariants specification (INV-LOCAL-01 through INV-SLA-10).
+  * Sibling ecosystem partner matrix referencing 16 repositories across `ellmos-ai`, `dev-bricks`, `file-bricks`, `doc-bricks`, `entertain-and-more`, `research-line`, and `open-bricks`.
+  * Automated metadata contract test suite in `tests/test_metadata.py`.
+  * Bilingual `SECURITY.md` with Supported Versions table, binding 48-hour response SLA, 5-day triage commitment, and official contacts.
+  * `THIRD_PARTY_LICENSES.md` inventory verifying zero external runtime dependencies.
+  * Local `MARKETING-LOG.txt` tracking discoverability milestones and verification proofs.
+- `ellmos-module.v2.json`: originally registered decision-clicker as an
+  optional structural sub-module of `policy-registry` (ticket
+  T-20260824-474639761, user decision 2026-08-24, F2). The 2026-08-27 user
+  decision supersedes only the optional composition status; the historical
+  data-level seam remains documented.
+  Both tools point at the same on-disk `_DECISIONS` chain -- the coupling is
+  data-level, not a code dependency in either direction.
+- `tests/test_module_manifest.py`: contract test for the manifest (JSON
+  validity, private-visibility gate while `PRIVATE.txt` exists, optional-not-
+  required seam, version parity with `pyproject.toml`).
 
 ### Changed
 
@@ -18,19 +41,12 @@ All notable changes to this project are documented here. The format follows
   append-only reset history.
 - New entries require an explicit question and options, and ID allocation also
   reserves identifiers found in nested historical archives.
-
-### Added
-
-- `ellmos-module.v2.json`: originally registered decision-clicker as an
-  optional structural sub-module of `policy-registry` (ticket
-  T-20260824-474639761, user decision 2026-08-24, F2). The 2026-08-27 user
-  decision supersedes only the optional composition status; the historical
-  data-level seam remains documented.
-  Both tools point at the same on-disk `_DECISIONS` chain -- the coupling is
-  data-level, not a code dependency in either direction.
-- `tests/test_module_manifest.py`: contract test for the manifest (JSON
-  validity, private-visibility gate while `PRIVATE.txt` exists, optional-not-
-  required seam, version parity with `pyproject.toml`).
+- Harden `.github/workflows/ci.yml` with concurrency `cancel-in-progress`,
+  bytecode compilation gate (`python -m compileall -q src tests`), and verbose test execution.
+- Harden `.gitignore` against multi-host synchronization conflict copies,
+  multi-agent concurrency locks, and packaging caches.
+- Standardize `pyproject.toml` with PEP 621 ecosystem URLs, OS classifiers, and pytest `addopts = "-ra -v"`.
+- Normalize newline assertion in `tests/test_server.py` for cross-platform CRLF/LF resilience.
 
 ## [1.0.1] - 2026-08-21
 
