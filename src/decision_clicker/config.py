@@ -18,7 +18,7 @@ DEFAULT_HOST = "127.0.0.1"
 
 def is_loopback_host(host: str) -> bool:
     """Nur explizite Loopback-Adressen sind fuer den Mini-Server zulaessig."""
-    candidate = host.strip().lower()
+    candidate = host.strip().lower().strip("[]")
     if candidate == "localhost":
         return True
     try:
