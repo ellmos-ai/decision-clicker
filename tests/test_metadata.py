@@ -133,9 +133,9 @@ def test_readme_badges_suite():
     """Verify README.md contains complete Shields.io badge suite."""
     text_en = (ROOT / "README.md").read_text(encoding="utf-8")
     expected_badges = [
-        "version-1.1.0-blue.svg",
+        "version-1.1.1-blue.svg",
         "CI-passing-brightgreen.svg",
-        "tests-138%2B%20passed-brightgreen.svg",
+        "tests-142%2B%20passed-brightgreen.svg",
         "privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg",
         "security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg",
         "security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg",
@@ -143,7 +143,7 @@ def test_readme_badges_suite():
         "ecosystem-ellmos--ai-purple.svg",
         "umbrella-open--bricks-orange.svg",
         "LLM-llms.txt-blueviolet.svg",
-        "last%20checked-2026--09--09-informational.svg",
+        "last%20checked-2026--09--10-informational.svg",
         "license-MIT-green.svg",
     ]
     for badge in expected_badges:
@@ -205,17 +205,18 @@ def test_sibling_ecosystem_matrix():
 
 
 def test_llms_txt_freshness_and_parity():
-    """Verify llms.txt is up to date with version 1.1.0 and recent timestamp."""
+    """Verify llms.txt is up to date with version 1.1.1 and recent timestamp."""
     llms_text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-    assert "2026-09-09" in llms_text
-    assert "1.1.0" in llms_text
+    assert "2026-09-10" in llms_text
+    assert "1.1.1" in llms_text
     assert "decision_clicker/api.py" in llms_text
     assert "decision_clicker/writer.py" in llms_text
 
 
 def test_changelog_release_entry():
-    """Verify CHANGELOG.md documents version 1.1.0 under 2026-09-09."""
+    """Verify CHANGELOG.md documents version 1.1.1 under 2026-09-10 and preserves 1.1.0."""
     changelog_text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [1.1.1] - 2026-09-10" in changelog_text
     assert "## [1.1.0] - 2026-09-09" in changelog_text
 
 
@@ -225,3 +226,52 @@ def test_zero_external_runtime_dependencies():
     deps = pyproject.get("project", {}).get("dependencies", [])
     assert deps == [], "decision-clicker must have zero external runtime dependencies"
     assert (ROOT / "THIRD_PARTY_LICENSES.md").is_file(), "THIRD_PARTY_LICENSES.md must exist"
+
+
+def test_gitignore_hygiene_patterns():
+    """Verify .gitignore contains comprehensive multi-host conflict, lock, and cache patterns."""
+    gitignore_path = ROOT / ".gitignore"
+    content = gitignore_path.read_text(encoding="utf-8")
+    required_patterns = [
+        "*-conflict-*",
+        "*.sync-conflict-*",
+        "*-ASUS-GEI.*",
+        "*-WORKSTATION-LG.*",
+        "*-WORKSTATION.*",
+        "* (kopie)*",
+        "* (copy)*",
+        "LOCK",
+        "LOCK.*",
+        "*.lock",
+        "LOCK*.txt",
+        "LOCK.permissions.json",
+        "uv.lock",
+        ".coverage.*",
+        "wheelhouse/",
+        ".wheel-smoke/",
+    ]
+    for pattern in required_patterns:
+        assert pattern in content, f"Missing gitignore pattern: {pattern}"
+
+
+def test_pytest_configuration_and_flags():
+    """Verify pytest configuration in pyproject.toml has standardized -ra -v options."""
+    pyproject = _read_toml()
+    addopts = pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", "")
+    assert "-ra" in addopts
+    assert "-v" in addopts
+
+
+def test_ci_workflow_pytest_flags():
+    """Verify CI workflow executes pytest with standardized -ra -v flags."""
+    ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+    content = ci_path.read_text(encoding="utf-8")
+    assert "pytest -ra -v" in content
+
+
+def test_changelog_recent_pfad_a_entry():
+    """Verify CHANGELOG.md contains the latest Pfad A release entry."""
+    changelog_path = ROOT / "CHANGELOG.md"
+    content = changelog_path.read_text(encoding="utf-8")
+    assert "## [1.1.1] - 2026-09-10" in content
+    assert "Technical Hygiene" in content

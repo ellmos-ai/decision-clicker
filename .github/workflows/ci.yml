@@ -34,6 +34,6 @@ jobs:
       - name: Lint
         run: python -m ruff check .
       - name: Test
-        run: python -m pytest -v
+        run: python -m pytest -ra -v
       - name: Build distributions
         run: python -m build

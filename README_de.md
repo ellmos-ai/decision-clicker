@@ -4,9 +4,9 @@
 
 [English](README.md) · [Deutsch](README_de.md)
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-138%2B%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-142%2B%20passed-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
@@ -16,7 +16,7 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--09-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--10-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker ist eine Local-First Python-Bibliothek, ein CLI-Tool und eine leichtgewichtige Web-Oberfläche für dateibasierte Human-in-the-Loop Entscheidungsketten. Sie bietet menschlichen Bedienern und autonomen Agenten-Flotten einen deterministischen, fehlertoleranten Arbeitsablauf zur Einstellung, Prüfung, Dokumentation, Revision und reversiblen Rücknahme von Governance-Entscheidungen – ohne Notwendigkeit einer zentralen Datenbank.
@@ -275,7 +275,7 @@ Startet den Miniserver auf `127.0.0.1:8096` und öffnet die UI im Standard-Brows
 
 ```bash
 decision-clicker add "Auswahl der Rollout-Strategie" \
-  --frage "Welches Rollout-Muster soll für v1.1.0 verwendet werden?" \
+  --frage "Welches Rollout-Muster soll für v1.1.1 verwendet werden?" \
   --option "A — Blue/Green mit sofortiger Verkehrsumschaltung" \
   --option "B — Canary-Rollout gestaffelt über 48 Stunden" \
   --empfehlung "B — Canary ermöglicht automatischen Rollback" \

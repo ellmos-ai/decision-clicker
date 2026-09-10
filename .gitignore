@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 # Test, coverage, and packaging artifacts
 .coverage
+.coverage.*
 htmlcov/
 coverage/
 wheelhouse/
@@ -33,6 +34,11 @@ _local/
 *.sync-temp-*
 *.conflict
 *-CONFLIT-*
+*-ASUS-GEI.*
+*-WORKSTATION-LG.*
+*-WORKSTATION.*
+* (kopie)*
+* (copy)*
 
 # Multi-agent locks (fail-closed concurrency governance)
 LOCK
@@ -40,6 +46,7 @@ LOCK.*
 *.lock
 LOCK*.txt
 LOCK.permissions.json
+uv.lock
 
 # Legacy real-data fixture retained on some maintainer systems; never track.
 tests/data/postfach_2026-08-07.txt

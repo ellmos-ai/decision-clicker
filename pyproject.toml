@@ -1,6 +1,6 @@
 [project]
 name = "decision-clicker"
-version = "1.1.0"
+version = "1.1.1"
 description = "Local, conservative UI and CLI for file-based decision chains"
 readme = "README.md"
 license = "MIT"

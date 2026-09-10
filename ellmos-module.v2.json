@@ -1,7 +1,7 @@
 {
   "schema": "ellmos.module.v2",
   "id": "decision-clicker",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "display_name": "decision-clicker",
   "category": "control",
   "kind": "tool",
