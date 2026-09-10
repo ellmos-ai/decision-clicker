@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] - 2026-09-10
+
+### Changed
+
+- Technical Hygiene (Pfad A):
+  * Bump package version to 1.1.1 across `pyproject.toml`, `src/decision_clicker/__init__.py`, `ellmos-module.v2.json`, `llms.txt`, and documentation.
+  * Comprehensive `.gitignore` hardening against multi-host cloud sync conflicts (`*-conflict-*`, `*.sync-conflict-*`, `*-ASUS-GEI.*`, `*-WORKSTATION-LG.*`, `*-WORKSTATION.*`, `* (kopie)*`, `* (copy)*`), multi-agent locks (`LOCK`, `LOCK.*`, `*.lock`, `LOCK*.txt`, `LOCK.permissions.json`, `uv.lock`), and test/coverage caches (`.coverage.*`).
+  * CI workflow hardening: enforce standardized `python -m pytest -ra -v` test execution flags across Ubuntu, macOS, and Windows runners in `.github/workflows/ci.yml`.
+  * Expand automated contract test suite in `tests/test_metadata.py` with 4 new verification gates: `test_gitignore_hygiene_patterns`, `test_pytest_configuration_and_flags`, `test_ci_workflow_pytest_flags`, and `test_changelog_recent_pfad_a_entry` (142 total tests passing).
+  * Synchronize timestamps and test counts in `llms.txt`, `README.md`, `README_de.md`, and `README.de.md`.
+
 ## [1.1.0] - 2026-09-09
 
 ### Added

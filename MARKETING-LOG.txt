@@ -2,6 +2,24 @@
 # Tracked Pfad B Discoverability, Visual Architecture, Governance & Verification Milestones
 
 ================================================================================
+[2026-09-10 18:25 CEST] [PFAD_A_TECHNICAL_HYGIENE]
+Repository:        ellmos-ai/decision-clicker
+Local Canonical:   C:\_Local_DEV\repos\decision-clicker
+Branch:            master
+Version:           1.1.1
+License:           MIT (SPDX-License-Identifier: MIT)
+Maintainer:        Lukas Geiger (lukas@open-bricks.org / support@lukasgeiger.com)
+Security Contact:  security@open-bricks.org, security@ellmos.ai
+
+1. TECHNICAL HYGIENE & GOVERNANCE PARITY
+--------------------------------------------------------------------------------
+- Version incremented to 1.1.1 across all package manifests and source files.
+- Hardened .gitignore rules against multi-host conflict files (*-ASUS-GEI.*, *-WORKSTATION-LG.*, * (kopie)*, * (copy)*), locks (uv.lock), and coverage files (.coverage.*).
+- CI workflow tests standardized with -ra -v flags across all matrix runners in ci.yml.
+- Automated contract tests expanded to 142 total passing tests (+4 new Pfad A contract gates).
+- Badges, llms.txt context, and changelog fully synchronized to 2026-09-10.
+
+================================================================================
 [2026-09-09 17:00 CEST] [PFAD_B_DISCOVERABILITY_AND_DESIGN]
 Repository:        ellmos-ai/decision-clicker
 Local Canonical:   C:\_Local_DEV\repos\decision-clicker
