@@ -49,7 +49,19 @@ def default_onedrive_root() -> Path:
     return candidates[0]
 
 
-DEFAULT_CHAIN = default_onedrive_root() / ".TOPICS" / "_control-center" / "_DECISIONS"
+def default_onedrive_chain() -> Path:
+    root = default_onedrive_root()
+    candidates = [
+        root / ".TOPICS" / "_control-center" / "_CONTROL" / "_DECISIONS",
+        root / ".TOPICS" / "_control-center" / "_DECISIONS",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
+
+
+DEFAULT_CHAIN = default_onedrive_chain()
 
 # Ab dieser Länge warnt die Oberfläche vor einer Bestandsbereinigung. Der
 # Ein-Dokument-Aktivvertrag erlaubt dennoch keinen nummerierten Folgeteil.
