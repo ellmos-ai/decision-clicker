@@ -89,27 +89,46 @@ class Handler(BaseHTTPRequestHandler):
     def _local_authorities(self) -> set[str]:
         """Erlaubte Host-/Origin-Autoritäten des tatsächlichen Servers."""
         bound_host, bound_port = self.server.server_address[:2]
-        hosts = {str(bound_host), self.settings.host, "127.0.0.1", "localhost"}
-        return {
-            f"{host.lower()}:{bound_port}"
-            for host in hosts
-            if host and is_loopback_host(host)
-        }
+        hosts = {str(bound_host), self.settings.host, "127.0.0.1", "localhost", "::1", "[::1]"}
+        authorities = set()
+        for host in hosts:
+            if not host:
+                continue
+            cleaned = host.strip().lower()
+            if is_loopback_host(cleaned):
+                authorities.add(f"{cleaned}:{bound_port}")
+                authorities.add(cleaned)
+        return authorities
 
     def _verify_write_request(self) -> None:
         """Cross-Site-POSTs, DNS-Rebinding und einfache JSON-CSRF blockieren."""
         authorities = self._local_authorities()
+        bound_port = self.server.server_address[1]
         host = (self.headers.get("Host") or "").strip().lower()
-        if host not in authorities:
+        host_name = host.split(":")[0].strip("[]")
+        if host not in authorities and not is_loopback_host(host_name):
             raise RequestRejected("Ungültiger Host für den lokalen Schreibzugriff.")
-
-        origin = (self.headers.get("Origin") or "").strip().lower()
-        if origin and origin not in {f"http://{authority}" for authority in authorities}:
-            raise RequestRejected("Cross-Origin-Schreibzugriff wurde abgewiesen.")
 
         fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
         if fetch_site and fetch_site not in {"same-origin", "none"}:
             raise RequestRejected("Cross-Site-Schreibzugriff wurde abgewiesen.")
+
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and origin.lower() != "null":
+            parsed = urlparse(origin)
+            origin_scheme = (parsed.scheme or "").lower()
+            origin_host = (parsed.hostname or "").lower()
+            origin_port = parsed.port or bound_port
+            is_valid_origin = (
+                origin_scheme in ("http", "https")
+                and is_loopback_host(origin_host)
+                and origin_port == bound_port
+            )
+            if not is_valid_origin:
+                raise RequestRejected("Cross-Origin-Schreibzugriff wurde abgewiesen.")
+        elif origin.lower() == "null":
+            if fetch_site and fetch_site not in {"same-origin", "none"}:
+                raise RequestRejected("Cross-Origin-Schreibzugriff wurde abgewiesen.")
 
         content_type = (self.headers.get("Content-Type") or "").lower()
         if "application/json" in content_type:
