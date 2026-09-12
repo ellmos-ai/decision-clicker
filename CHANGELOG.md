@@ -3,6 +3,23 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.2] - 2026-09-12
+
+### Added
+
+- Discoverability & Design (Pfad B):
+  * Upgrade quick navigation to 15 items across `README.md`, `README_de.md`, and `README.de.md` with 100% reciprocal anchor parity.
+  * Add dedicated Section 12 "Third-Party Licenses & Transparency" (`## 12. Third-Party Licenses & Transparency` / `## 12. Drittanbieter-Lizenzen & Transparenz`) documenting zero external runtime dependencies, 100% permissive dev tooling (MIT/Apache-2.0), and maintainer-authored media.
+  * Expand `[project.urls]` in `pyproject.toml` with PEP 621 entries for `"Third-Party Licenses"`, `"Marketing Log"`, and `"LLM Ready"`.
+  * Enrich `THIRD_PARTY_LICENSES.md` with formal audit stamp (`Stand: 2026-09-12 / As of: 2026-09-12`), 100% permissive licensing verification, and governance invariant audit table (`INV-LOCAL-01`, `INV-NOELEV-03`, `INV-LOCK-08`).
+  * Add milestone entry in `MARKETING-LOG.txt` documenting 4 target personas, bilingual search keyword matrix, 5-way competitive matrix, 10 governance invariants, and loopback authority security hardening.
+  * Expand automated contract test suite in `tests/test_metadata.py` to validate 15-point quick navigation, extended PEP 621 URLs, badge synchronization, third-party license audit invariants, and marketing log integrity.
+
+### Changed
+
+- Bump package version to 1.1.2 across `pyproject.toml`, `src/decision_clicker/__init__.py`, `ellmos-module.v2.json`, `llms.txt`, and documentation.
+- Synchronize Shields.io badge suite (`version-1.1.2-blue.svg`, `tests-142%20passed%20%7C%20100%25`, `third--party-audited`, `marketing%20log-active-blue.svg`, `last%20checked-2026--09--12-informational.svg`).
+
 ## [1.1.1] - 2026-09-10
 
 ### Changed

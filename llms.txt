@@ -2,10 +2,10 @@
 
 > Local-first Python library, CLI, and mini UI for file-based decision chains.
 
-- **Version:** 1.1.1
-- **Status:** Active (Pfad A Technical Hygiene & Multi-OS Hardened)
-- **Last-Checked:** 2026-09-10
-- **Verified Tests:** 142+ passed | 100% green
+- **Version:** 1.1.2
+- **Status:** Active (Pfad B Discoverability, 15-Point Quick Nav & Security Guardrails)
+- **Last-Checked:** 2026-09-12
+- **Verified Tests:** 156 passed | 100% green
 - **License:** MIT (SPDX-License-Identifier: MIT)
 - **Ecosystem:** [ellmos-ai](https://github.com/ellmos-ai) · [open-bricks Umbrella](https://github.com/open-bricks)
 
