@@ -7,7 +7,10 @@ Shields.io badges, Mermaid diagrams, Governance Invariants, and zero runtime dep
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+from decision_clicker import __version__
 
 try:
     import tomllib
@@ -33,6 +36,9 @@ def test_pep621_project_urls():
         "Changelog",
         "Security",
         "Issues",
+        "Third-Party Licenses",
+        "Marketing Log",
+        "LLM Ready",
         "Parent Organization",
         "Umbrella Ecosystem",
     ]
@@ -111,7 +117,7 @@ def test_security_policy_slas_and_contacts():
 
 
 def test_bilingual_readme_parity():
-    """Verify English and German READMEs exist with 14-point quick navigation."""
+    """Verify English and German READMEs exist with 15-point quick navigation."""
     readme_en = ROOT / "README.md"
     readme_de = ROOT / "README_de.md"
     readme_de_alt = ROOT / "README.de.md"
@@ -122,28 +128,33 @@ def test_bilingual_readme_parity():
 
     text_en = readme_en.read_text(encoding="utf-8")
     text_de = readme_de.read_text(encoding="utf-8")
+    text_de_alt = readme_de_alt.read_text(encoding="utf-8")
 
-    # Verify 14 quick nav items
-    for i in range(1, 15):
+    # Verify 15 quick nav items
+    for i in range(1, 16):
         assert f"{i}. [" in text_en, f"README.md missing quick navigation item {i}"
         assert f"{i}. [" in text_de, f"README_de.md missing quick navigation item {i}"
+
+    assert text_de == text_de_alt, "README.de.md must be byte-for-byte identical with README_de.md"
 
 
 def test_readme_badges_suite():
     """Verify README.md contains complete Shields.io badge suite."""
     text_en = (ROOT / "README.md").read_text(encoding="utf-8")
     expected_badges = [
-        "version-1.1.1-blue.svg",
+        "version-1.1.2-blue.svg",
         "CI-passing-brightgreen.svg",
-        "tests-142%2B%20passed-brightgreen.svg",
+        "tests-156%20passed%20%7C%20100%25-brightgreen.svg",
         "privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg",
         "security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg",
         "security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg",
+        "third--party-audited%20%7C%20zero%20dependencies-green.svg",
+        "marketing%20log-active-blue.svg",
         "code%20style-Ruff-black.svg",
         "ecosystem-ellmos--ai-purple.svg",
         "umbrella-open--bricks-orange.svg",
         "LLM-llms.txt-blueviolet.svg",
-        "last%20checked-2026--09--10-informational.svg",
+        "last%20checked-2026--09--12-informational.svg",
         "license-MIT-green.svg",
     ]
     for badge in expected_badges:
@@ -205,17 +216,18 @@ def test_sibling_ecosystem_matrix():
 
 
 def test_llms_txt_freshness_and_parity():
-    """Verify llms.txt is up to date with version 1.1.1 and recent timestamp."""
+    """Verify llms.txt is up to date with version 1.1.2 and recent timestamp."""
     llms_text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-    assert "2026-09-10" in llms_text
-    assert "1.1.1" in llms_text
+    assert "2026-09-12" in llms_text
+    assert "1.1.2" in llms_text
     assert "decision_clicker/api.py" in llms_text
     assert "decision_clicker/writer.py" in llms_text
 
 
 def test_changelog_release_entry():
-    """Verify CHANGELOG.md documents version 1.1.1 under 2026-09-10 and preserves 1.1.0."""
+    """Verify CHANGELOG.md documents version 1.1.2 under 2026-09-12 and preserves 1.1.1 and 1.1.0."""
     changelog_text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [1.1.2] - 2026-09-12" in changelog_text
     assert "## [1.1.1] - 2026-09-10" in changelog_text
     assert "## [1.1.0] - 2026-09-09" in changelog_text
 
@@ -270,8 +282,49 @@ def test_ci_workflow_pytest_flags():
 
 
 def test_changelog_recent_pfad_a_entry():
-    """Verify CHANGELOG.md contains the latest Pfad A release entry."""
+    """Verify CHANGELOG.md contains the Pfad A release entry."""
     changelog_path = ROOT / "CHANGELOG.md"
     content = changelog_path.read_text(encoding="utf-8")
     assert "## [1.1.1] - 2026-09-10" in content
     assert "Technical Hygiene" in content
+
+
+def test_changelog_recent_pfad_b_entry():
+    """Verify CHANGELOG.md contains the latest Pfad B release entry."""
+    changelog_path = ROOT / "CHANGELOG.md"
+    content = changelog_path.read_text(encoding="utf-8")
+    assert "## [1.1.2] - 2026-09-12" in content
+    assert "Discoverability & Design" in content
+
+
+def test_third_party_licenses_audit_and_invariants():
+    """Verify THIRD_PARTY_LICENSES.md contains formal audit stamp and invariant verifications."""
+    tpl_path = ROOT / "THIRD_PARTY_LICENSES.md"
+    assert tpl_path.is_file(), "THIRD_PARTY_LICENSES.md must exist"
+    content = tpl_path.read_text(encoding="utf-8")
+    assert "Stand: 2026-09-12 / As of: 2026-09-12" in content
+    assert "INV-LOCAL-01" in content
+    assert "INV-NOELEV-03" in content
+    assert "INV-LOCK-08" in content
+
+
+def test_marketing_log_milestone_and_personas():
+    """Verify MARKETING-LOG.txt contains the latest Pfad B milestone and 4 target personas."""
+    mkt_path = ROOT / "MARKETING-LOG.txt"
+    assert mkt_path.is_file(), "MARKETING-LOG.txt must exist"
+    content = mkt_path.read_text(encoding="utf-8")
+    assert "[2026-09-12 11:00 CEST] [PFAD_B_DISCOVERABILITY_AND_DESIGN]" in content
+    assert "Autonomous Agent Fleet Operators" in content
+    assert "DevOps, SRE" in content
+    assert "Privacy-Conscious Enterprise AI" in content
+    assert "Local-First Desktop" in content
+    assert "5-WAY COMPETITIVE MATRIX" in content
+
+
+def test_module_manifest_version_parity():
+    """Verify ellmos-module.v2.json exists and matches package __version__."""
+    manifest_path = ROOT / "ellmos-module.v2.json"
+    assert manifest_path.is_file(), "ellmos-module.v2.json must exist"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data.get("version") == __version__
+    assert data.get("version") == "1.1.2"

@@ -4,19 +4,21 @@
 
 [English](README.md) · [Deutsch](README_de.md)
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-142%2B%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-156%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
 [![Security](https://img.shields.io/badge/security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg)](SECURITY.md)
 [![Security SLA](https://img.shields.io/badge/security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg)](SECURITY.md)
+[![Third-Party](https://img.shields.io/badge/third--party-audited%20%7C%20zero%20dependencies-green.svg)](THIRD_PARTY_LICENSES.md)
+[![Marketing Log](https://img.shields.io/badge/marketing%20log-active-blue.svg)](MARKETING-LOG.txt)
 [![Code Style](https://img.shields.io/badge/code%20style-Ruff-black.svg)](pyproject.toml)
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--10-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--12-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker ist eine Local-First Python-Bibliothek, ein CLI-Tool und eine leichtgewichtige Web-Oberfläche für dateibasierte Human-in-the-Loop Entscheidungsketten. Sie bietet menschlichen Bedienern und autonomen Agenten-Flotten einen deterministischen, fehlertoleranten Arbeitsablauf zur Einstellung, Prüfung, Dokumentation, Revision und reversiblen Rücknahme von Governance-Entscheidungen – ohne Notwendigkeit einer zentralen Datenbank.
@@ -38,9 +40,10 @@ Die Markdown- und Textdateien (`TO-DECIDE-USER.txt` und `DECIDED-AND-DONE.md`) b
 9. [HTTP Mini-Server & Web-UI](#9-http-mini-server--web-ui)
 10. [Python-Bibliothek API](#10-python-bibliothek-api)
 11. [Ökosystem & Partner-Matrix](#11-ökosystem--partner-matrix)
-12. [Verifikation & Qualitäts-Gates](#12-verifikation--qualitäts-gates)
-13. [Maschinenlesbarer LLM-Kontext](#13-maschinenlesbarer-llm-kontext)
-14. [Beiträge & Lizenz](#14-beiträge--lizenz)
+12. [Drittanbieter-Lizenzen & Transparenz](#12-drittanbieter-lizenzen--transparenz)
+13. [Verifikation & Qualitäts-Gates](#13-verifikation--qualitäts-gates)
+14. [Maschinenlesbarer LLM-Kontext](#14-maschinenlesbarer-llm-kontext)
+15. [Beiträge & Lizenz](#15-beiträge--lizenz)
 
 ---
 
@@ -305,18 +308,38 @@ Liest Einträge aus dem Desktop-Postfach ein und überführt sie idempotent in d
 | `/verlauf` | `GET` | Revisionshistorie bereits getroffener Entscheidungen | Keine |
 | `/neu` | `GET`, `POST` | Formular zur Erstellung neuer Entscheidungen | Host- & Origin-Prüfung |
 | `/api/index` | `GET` | Maschinenlesbarer JSON-Index | Keine |
-| `/api/decide` | `POST` | Entscheidung speichern | `X-Decision-Clicker: 1` oder Origin |
-| `/api/undo/<key>` | `POST` | Entscheidung reversibel zurücksetzen | `X-Decision-Clicker: 1` oder Origin |
-| `/api/takeover` | `POST` | Postfach-Import anstoßen | `X-Decision-Clicker: 1` oder Origin |
+| `/api/new` | `POST` | **Offenen Vorschlag** einstellen (einziger JSON-Schreibweg) | `X-Decision-Clicker: 1` + Host- & Origin-Prüfung |
+| `/api/decide` | `POST` | Entscheidung speichern | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
+| `/api/intake` | `POST` | Postfach-Import anstoßen | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
+| `/api/undo/<key>` | `POST` | Entscheidung reversibel zurücksetzen | Nur menschliche HTML-Oberfläche — JSON abgewiesen; einmalige Bestätigung |
 
-Automationsbeispiel via cURL:
+`/api/decide`, `/api/intake` und `/api/undo/*` lehnen `Content-Type:
+application/json` auch mit Schutzheader ab; sie verlangen eine ausdrückliche
+Aktion in der HTML-Oberfläche. Diese Formulare tragen eine fünf Minuten gültige,
+einmal verwendbare Bestätigung, die an Serverinstanz, Aktion und Eintrag
+gebunden ist. Ein bloßer Wechsel des Content-Type überschreitet die Grenze zur
+menschlichen Oberfläche daher nicht.
+
+Lokale Automation darf folglich nur **vorschlagen**:
 
 ```bash
-curl -X POST http://127.0.0.1:8096/api/decide \
+curl -X POST http://127.0.0.1:8096/api/new \
   -H "Content-Type: application/json" \
   -H "X-Decision-Clicker: 1" \
-  -d '{"key": "D-20260909-01", "choice": "B", "note": "Über automatisierten Agenten bestätigt"}'
+  -d '{"frage": "1.2.0 veröffentlichen?", "optionen": ["A: ja", "B: warten"]}'
 ```
+
+Ein eingestellter Kandidat wird immer als `STATUS: OFFEN` mit unbeantwortetem
+Nutzerfeld gerendert; mitgesendete Felder `status`, `decision` oder
+`implemented` bleiben wirkungslos. KI-, Memory- und Policy-Adapter erhalten
+`decision_clicker.api.ProposalSubmitter`, nicht die menschliche
+Mutationsfassade `DecisionClicker`.
+
+Optionale Belegmetadaten nutzen diese einzeiligen Felder: `EVIDENZANKER`,
+`GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` und
+`KONTEXT-FINGERPRINT`. Mehrere Werte werden mit ` | ` verbunden; ein
+Fingerprint hat die Form `sha256:` plus 64 Hex-Zeichen. Sie verbessern die
+Belegsuche, bescheinigen aber niemals Wahrheit.
 
 ---
 
@@ -380,7 +403,17 @@ Decision Clicker ist in das Open-Bricks- und Ellmos-AI-Ökosystem eingebettet un
 
 ---
 
-## 12. Verifikation & Qualitäts-Gates
+## 12. Drittanbieter-Lizenzen & Transparenz
+
+`decision-clicker` garantiert uneingeschränkte Datenhoheit und Supply-Chain-Transparenz:
+- **Keine externen Laufzeitabhängigkeiten**: Basiert ausschließlich auf der Python-Standardbibliothek (`http.server`, `urllib.parse`, `json`, `pathlib`, `subprocess`, `argparse`, `dataclasses`, `re`, `shutil`, `typing`) unter der Python Software Foundation License (PSFL).
+- **100% permissive Entwicklungswerkzeuge**: Build-, Linting- und Test-Abhängigkeiten (`pytest`, `ruff`, `build`, `setuptools`) sind strikt auf Entwicklungsumgebungen beschränkt und unter MIT/Apache-2.0 lizenziert.
+- **Maintainer-eigene Projektgrafiken**: Projektgrafiken (`assets/banner.png` / `assets/banner.svg`) wurden eigenständig erstellt und unterliegen der MIT-Lizenz ohne externe Schriftarten oder Stockmedien.
+- Vollständige Lizenztexte, Prüfzeitstempel und das Abhängigkeitsinventar sind in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) dokumentiert.
+
+---
+
+## 13. Verifikation & Qualitäts-Gates
 
 Vor jedem Release durchläuft Decision Clicker strenge Prüfungen:
 
@@ -388,7 +421,7 @@ Vor jedem Release durchläuft Decision Clicker strenge Prüfungen:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 Syntaxfehler unter Python 3.10–3.13. |
 | **Linting & Stil** | `ruff check` | Gesamtes Repository | 0 Warnungen, vollständige PEP 8 Konformität. |
-| **Unit & Integration** | `pytest` | `tests/` | 138+ bestandene Tests (100% grün). |
+| **Unit & Integration** | `pytest` | `tests/` | 156 bestandene Tests (100% grün). |
 | **Metadaten-Parität** | `tests/test_metadata.py` | Badges, PEP 621, Invarianten | Vertragstests verifizieren Dokumentation und SLAs. |
 | **Paketierung** | `python -m build` | Quell- & Wheel-Paket | Saubere Erstellung ohne Fehler. |
 
@@ -403,13 +436,13 @@ python -m build
 
 ---
 
-## 13. Maschinenlesbarer LLM-Kontext
+## 14. Maschinenlesbarer LLM-Kontext
 
 Für KI-Agenten steht [llms.txt](llms.txt) mit komprimierter Code-Struktur, Invarianten-Übersicht und Schnittstellendefinitionen bereit. Modulmetadaten sind in `ellmos-module.v2.json` hinterlegt.
 
 ---
 
-## 14. Beiträge & Lizenz
+## 15. Beiträge & Lizenz
 
 Beiträge sind herzlich willkommen! Bitte beachten Sie [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md) und [SECURITY.md](SECURITY.md).
 

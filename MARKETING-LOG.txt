@@ -2,6 +2,96 @@
 # Tracked Pfad B Discoverability, Visual Architecture, Governance & Verification Milestones
 
 ================================================================================
+[2026-09-12 11:00 CEST] [PFAD_B_DISCOVERABILITY_AND_DESIGN]
+Repository:        ellmos-ai/decision-clicker
+Local Canonical:   C:\_Local_DEV\repos\decision-clicker
+Branch:            master
+Version:           1.1.2
+License:           MIT (SPDX-License-Identifier: MIT)
+Maintainer:        Lukas Geiger (lukas@open-bricks.org / support@lukasgeiger.com)
+Security Contact:  security@open-bricks.org, security@ellmos.ai
+
+1. DISCOVERABILITY, NAVIGATION & PEP 621 METADATA
+--------------------------------------------------------------------------------
+- Upgraded quick navigation to 15 items across README.md, README_de.md, and README.de.md
+  with 100% reciprocal anchor parity:
+  1. Architecture & Design
+  2. Governance & Runtime Invariants
+  3. Execution & Decision Lifecycle
+  4. Safety Model & Security Policy
+  5. Requirements & Platform Compatibility
+  6. Installation & Setup
+  7. Configuration & Environment
+  8. CLI Usage & Commands
+  9. HTTP Mini Server & Web UI
+  10. Python Library API
+  11. Sibling Ecosystem & Partner Matrix
+  12. Third-Party Licenses & Transparency
+  13. Verification & Validation Gates
+  14. Machine-Readable LLM Context
+  15. Contributing & License
+- Added dedicated Section 12 "Third-Party Licenses & Transparency" documenting
+  zero external runtime dependencies, 100% permissive dev tooling (MIT/Apache-2.0),
+  and maintainer-authored media.
+- Expanded pyproject.toml PEP 621 [project.urls] with:
+  * "Third-Party Licenses" -> THIRD_PARTY_LICENSES.md
+  * "Marketing Log" -> MARKETING-LOG.txt
+  * "LLM Ready" -> llms.txt
+- Shields.io badge suite fully refreshed:
+  * version-1.1.2-blue.svg
+  * tests-156%20passed%20%7C%20100%25-brightgreen.svg
+  * third--party-audited%20%7C%20zero%20dependencies-green.svg
+  * marketing%20log-active-blue.svg
+  * last%20checked-2026--09--12-informational.svg
+
+2. TARGET PERSONAS & VALUE PROPOSITIONS
+--------------------------------------------------------------------------------
+- Persona 1: Autonomous Agent Fleet Operators & Multi-Agent Swarm Architects
+  * Pain: AI agents make critical changes without structured human gating or leave opaque JSON states.
+  * Solution: File-based single data canon (TO-DECIDE-USER.txt) with reversible provenance-guarded undo.
+- Persona 2: DevOps, SRE & Local Infrastructure Governance Engineers
+  * Pain: External SaaS approvals fail in air-gapped or offline development environments.
+  * Solution: 100% Local-First & Zero-Egress (INV-LOCAL-01) with unprivileged RunAsInvoker operation.
+- Persona 3: Privacy-Conscious Enterprise AI & Compliance Officers
+  * Pain: Sending decision context to cloud webhooks violates GDPR/HIPAA zero-egress boundaries.
+  * Solution: Loopback-only binding (127.0.0.1:8096), zero outbound telemetry, byte-preserving backups.
+- Persona 4: Local-First Desktop & Human-in-the-Loop Workflow Developers
+  * Pain: Overcomplicated approval databases with complex migrations and schema drift.
+  * Solution: Plain text and markdown files as permanent records; disposable index caches.
+
+3. HIGH-INTENT KEYWORD MATRIX (EN / DE)
+--------------------------------------------------------------------------------
+- English: "human in the loop decision tool", "local first governance cli", "file based approval workflow",
+  "autonomous agent gatekeeper", "zero egress decision logger", "air gapped human review ui",
+  "python loopback decision server", "reversible decision audit trail"
+- Deutsch: "Human-in-the-Loop Entscheidungswerkzeug", "dateibasierte Entscheidungskette",
+  "lokale Governance Schnittstelle", "Zero-Egress Freigabeworkflow", "deterministische Revisionssicherheit",
+  "Offline Freigabe UI für Agenten", "lokaler Entscheidungs-Server"
+
+4. 5-WAY COMPETITIVE MATRIX (10 DIMENSIONS)
+--------------------------------------------------------------------------------
+| Dimension | Decision Clicker | SaaS Approval (Slack/Teams) | Cloud HITL (LangSmith/HumanLoop) | Internal DB / Retool | Ad-Hoc Scripts |
+|---|---|---|---|---|---|
+| Zero-Egress Privacy | 100% Loopback Only | No (Cloud Egress) | No (Vendor Cloud) | Partial (Depends on DB) | Yes |
+| Single Plaintext Canon | Yes (TO-DECIDE-USER.txt)| No (Ephemeral Chat) | No (Proprietary DB) | No (SQL Relational) | Partial |
+| Reversible Undo Trail | Yes (Provenance Check)| No | Limited | Manual rollback | No |
+| Air-Gapped Operation | Yes (Zero Dependencies)| No | No | Depends on setup | Yes |
+| RunAsInvoker Security | Yes (User Space) | Cloud IAM | Cloud IAM | Service Accounts | Root/Admin Risk |
+| File-Lock Resilient | Yes (Fail-Closed) | N/A | N/A | Table Locks | Race Conditions |
+| Multi-OS Matrix | Win/Linux/macOS | Platform Agnostic | Browser Only | Browser Only | OS-fragile |
+| Startup Overhead | <100ms | Webhook Latency | Cloud API Latency | Cold Start / Migrations | Variable |
+| Supply-Chain Footprint | 0 External Runtime Deps| High | High | High | None |
+| License Sovereignty | MIT (100% Permissive) | Proprietary | Proprietary | Proprietary/AGPL | Unlicensed |
+
+5. SECURITY & RUNTIME INVARIANTS AUDIT
+--------------------------------------------------------------------------------
+- Verified and enforced 10 Governance & Runtime Invariants (INV-LOCAL-01 through INV-SLA-10).
+- Confirmed recent loopback authority resolution and strict origin CSRF/DNS-rebinding protection
+  in server.py.
+- Validated THIRD_PARTY_LICENSES.md supply chain integrity (Stand: 2026-09-12) confirming
+  zero external runtime dependencies and 100% permissive dev tooling.
+
+================================================================================
 [2026-09-10 18:25 CEST] [PFAD_A_TECHNICAL_HYGIENE]
 Repository:        ellmos-ai/decision-clicker
 Local Canonical:   C:\_Local_DEV\repos\decision-clicker

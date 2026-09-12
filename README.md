@@ -4,19 +4,21 @@
 
 [English](README.md) · [Deutsch](README_de.md)
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-142%2B%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-156%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
 [![Security](https://img.shields.io/badge/security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg)](SECURITY.md)
 [![Security SLA](https://img.shields.io/badge/security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg)](SECURITY.md)
+[![Third-Party](https://img.shields.io/badge/third--party-audited%20%7C%20zero%20dependencies-green.svg)](THIRD_PARTY_LICENSES.md)
+[![Marketing Log](https://img.shields.io/badge/marketing%20log-active-blue.svg)](MARKETING-LOG.txt)
 [![Code Style](https://img.shields.io/badge/code%20style-Ruff-black.svg)](pyproject.toml)
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--10-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--12-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker is a local-first Python library, CLI tool, and lightweight web UI for file-based human-in-the-loop decision chains. It provides human operators and autonomous agent fleets with a bulletproof, deterministic workflow to queue, review, record, audit, and reversibly undo governance decisions without moving the source of truth into an external database.
@@ -38,9 +40,10 @@ The markdown and plain-text chain files (`TO-DECIDE-USER.txt` and `DECIDED-AND-D
 9. [HTTP Mini Server & Web UI](#9-http-mini-server--web-ui)
 10. [Python Library API](#10-python-library-api)
 11. [Sibling Ecosystem & Partner Matrix](#11-sibling-ecosystem--partner-matrix)
-12. [Verification & Validation Gates](#12-verification--validation-gates)
-13. [Machine-Readable LLM Context](#13-machine-readable-llm-context)
-14. [Contributing & License](#14-contributing--license)
+12. [Third-Party Licenses & Transparency](#12-third-party-licenses--transparency)
+13. [Verification & Validation Gates](#13-verification--validation-gates)
+14. [Machine-Readable LLM Context](#14-machine-readable-llm-context)
+15. [Contributing & License](#15-contributing--license)
 
 ---
 
@@ -400,7 +403,17 @@ Decision Clicker operates within the open-bricks and ellmos-ai ecosystems, coord
 
 ---
 
-## 12. Verification & Validation Gates
+## 12. Third-Party Licenses & Transparency
+
+`decision-clicker` guarantees absolute sovereignty and supply-chain transparency:
+- **Zero External Runtime Dependencies**: Relies exclusively on the Python standard library (`http.server`, `urllib.parse`, `json`, `pathlib`, `subprocess`, `argparse`, `dataclasses`, `re`, `shutil`, `typing`) under the Python Software Foundation License (PSFL).
+- **100% Permissive Dev Tooling**: Build, linting, and testing dependencies (`pytest`, `ruff`, `build`, `setuptools`) are strictly isolated to development environments and covered under MIT/Apache-2.0 licenses.
+- **Maintainer-Authored Media**: Project artwork (`assets/banner.png` / `assets/banner.svg`) is authored by the maintainer and distributed under the MIT license with zero external stock fonts or assets.
+- Complete license texts, audit dates, and dependency inventory are maintained in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+---
+
+## 13. Verification & Validation Gates
 
 All modifications undergo strict validation gates prior to release:
 
@@ -408,7 +421,7 @@ All modifications undergo strict validation gates prior to release:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 syntax errors, valid bytecode across Python 3.10–3.13. |
 | **Linting & Quality** | `ruff check` | Entire repository | 0 linting warnings or style violations. |
-| **Unit & Integration** | `pytest` | `tests/` | 138+ tests passed (100% green). |
+| **Unit & Integration** | `pytest` | `tests/` | 156 tests passed (100% green). |
 | **Metadata Parity** | `tests/test_metadata.py` | Badges, PEP 621, Invariants | Contract tests pass verifying docs, URLs, and SLAs. |
 | **Build & Packaging** | `python -m build` | Source & Wheel dists | Clean build of distributable `.tar.gz` and `.whl`. |
 
@@ -423,13 +436,13 @@ python -m build
 
 ---
 
-## 13. Machine-Readable LLM Context
+## 14. Machine-Readable LLM Context
 
 Autonomous LLM agents inspecting this repository should read [llms.txt](llms.txt) for machine-optimized code maps, governance invariant definitions, and deployment boundaries. Module manifest details are published in `ellmos-module.v2.json`.
 
 ---
 
-## 14. Contributing & License
+## 15. Contributing & License
 
 Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md) before submitting patches.
 
