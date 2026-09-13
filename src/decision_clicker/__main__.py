@@ -5,6 +5,7 @@
     python -m decision_clicker --check         Kette prüfen, nichts starten
     python -m decision_clicker add …           Entscheidung einstellen (CLI-Weg)
     python -m decision_clicker intake          Desktop-Postfach übernehmen
+    python -m decision_clicker chain-tools     _tools/ der Kette aus dem Paket schreiben
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import webbrowser
 from dataclasses import replace
 from pathlib import Path
 
-from . import chain, intake, writer
+from . import chain, chain_tools, intake, writer
 from .config import Settings, load
 from .server import serve
 
@@ -116,6 +117,37 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_chain_tools(args: argparse.Namespace) -> int:
+    """Schreibt oder prueft `_tools/` der Kette.
+
+    Die Kette VERLANGT diese Werkzeuge (README §5), geliefert hat sie bisher
+    niemand -- sie wurden von Hand kopiert, und daraus entstand Drift. Hier
+    kommen sie aus genau einer Quelle: dem Paket.
+    """
+    settings = _einstellungen(args)
+    ziel = settings.chain_dir
+    if args.check:
+        befunde = chain_tools.check(ziel)
+        for b in befunde:
+            print(f"  {b.zustand:9s} _tools/{b.name}")
+        if all(b.ok for b in befunde):
+            print(f"Kette {ziel} ist auf dem Paketstand.")
+            return 0
+        print(f"Kette {ziel} weicht ab. Mit `chain-tools --force` nachziehen.",
+              file=sys.stderr)
+        return 1
+    try:
+        geschrieben = chain_tools.materialize(ziel, force=args.force)
+    except chain_tools.MaterializeError as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 2
+    if not geschrieben:
+        print(f"Nichts zu tun -- {ziel} ist bereits auf dem Paketstand.")
+    for datei in geschrieben:
+        print(f"geschrieben: {datei}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     _configure_utf8_output()
@@ -150,8 +182,20 @@ def main(argv: list[str] | None = None) -> int:
     _gemeinsam(p_in)
     p_in.set_defaults(func=cmd_intake)
 
+    p_ct = unter.add_parser("chain-tools",
+                            help="_tools/ der Kette aus dem Paket schreiben oder pruefen")
+    p_ct.add_argument("--check", action="store_true",
+                      help="nur melden, ob die Kette dem Paketstand entspricht")
+    p_ct.add_argument("--force", action="store_true",
+                      help="abweichende Dateien ueberschreiben")
+    _gemeinsam(p_ct)
+    p_ct.set_defaults(func=cmd_chain_tools)
+
     args = parser.parse_args(argv)
-    if args.check:
+    # Das globale --check ("nur Kette pruefen") gilt nur OHNE Subkommando. Sonst
+    # verschluckt es gleichnamige Flags der Subparser: `chain-tools --check` setzte
+    # args.check und landete dadurch in cmd_check statt im eigenen Kommando.
+    if args.check and getattr(args, "befehl", None) is None:
         args.func = cmd_check
     elif not hasattr(args, "func"):
         args.func = cmd_serve
