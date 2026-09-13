@@ -1,5 +1,33 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
+#
+# ============================================================================
+# EINGEFRORENE TESTKOPIE - NICHT DIE KANONISCHE FASSUNG, NICHT AKTUALISIEREN
+# ============================================================================
+#
+# Eingefroren auf VERSION 1.3.0 (Stand 2026-08-27). Die kanonische Fassung
+# lebt in der Entscheidungskette selbst und ist inzwischen weiter:
+#
+#   <_DECISIONS>/_tools/decisions_index.py   -- Stand 2026-09-13: 1.4.0
+#
+# Diese Datei ist AUSSCHLIESSLICH Inventar der Test-Fixture unter
+# tests/data/chain/: sie macht das Fixture-Verzeichnis zu einer
+# strukturell vollstaendigen Entscheidungskette, wie README.md sie
+# beschreibt ("_tools/decisions_index.py conforming to the canonical
+# decisions.index/1 parser contract"). Kein Test importiert oder fuehrt
+# sie aus - nachgemessen am 2026-09-13: keine einzige Referenz ausserhalb
+# von tests/data/ (test_distribution_privacy.py prueft nur, dass
+# tests/data/chain/TO-DECIDE-USER.txt im sdist landet).
+#
+# WARUM DIESER HINWEIS: Ohne ihn sieht diese Datei aus wie das Werkzeug.
+# Wer sie hier liest, liest ein 1.3.0-Verhalten und haelt es fuer das
+# geltende - der Parser-Vertrag hat sich seither geaendert. Genau das
+# wurde am 2026-09-13 als Drift-Falle aufgenommen (T-20260913-152165341).
+#
+# Wer das Verhalten des ECHTEN Werkzeugs braucht, nimmt die kanonische
+# Fassung. Wer die Fixture aendert, aktualisiert diese Kopie NICHT, sondern
+# passt bei Bedarf dieses Kopfstueck an.
+# ============================================================================
 """decisions_index.py — Index ueber die zentrale Entscheidungskette (_DECISIONS).
 
 Liest das eine kanonische aktive Entscheidungsdokument read-only und erzeugt
