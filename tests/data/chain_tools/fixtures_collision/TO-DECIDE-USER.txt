@@ -1,0 +1,19 @@
+# TO-DECIDE-USER — Fixture fuer history_collisions
+
+> Bewusst kollisionsfrei: Die Kollisionen dieser Fixture liegen
+> ausschliesslich in DECIDED-AND-DONE.md, damit der Test die aktive
+> Kettenpruefung und die Historienpruefung auseinanderhaelt.
+
+## D-20260101-001 — Einziger offener Eintrag
+
+STATUS: OFFEN
+SCOPE: global
+QUELLE: Fixture.
+FRAGE: Bleibt die aktive Kette sauber?
+OPTIONEN:
+- A — Ja.
+- B — Nein.
+EMPFEHLUNG: A.
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
