@@ -1,0 +1,45 @@
+# TO-DECIDE-USER — synthetische Fixture
+
+> Einziges aktives Dokument. Es enthält ausschließlich unbeantwortete,
+> entscheidungsreife Beispiele ohne reale Entscheidungsdaten.
+
+## D-20260101-002 — Offenes Beispiel
+
+STATUS: OFFEN
+SCOPE: host: ASUS-GEI
+QUELLE: Synthetische Fixture.
+FRAGE: Soll das offene Beispiel entschieden werden?
+OPTIONEN:
+- A — Erste Variante.
+- B — Zweite Variante.
+EMPFEHLUNG: A — kleinster synthetischer Pfad.
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+D-20260102-009 — Eintrag ohne Markdown-Überschrift
+
+STATUS: OFFEN
+QUELLE: Synthetische Fixture.
+FRAGE: Welche neutrale Variante gilt?
+OPTIONEN:
+Option A: Erste Möglichkeit.
+Option B: Zweite Möglichkeit.
+EMPFEHLUNG: A — nur für den Parser-Test.
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
+
+=== D-20260102-010 | Umrahmte Legacy-Überschrift ===
+
+STATUS: OFFEN
+SCOPE: global
+QUELLE: Synthetische Fixture.
+FRAGE: Wird die umrahmte Überschrift erkannt?
+OPTIONEN:
+- A — Ja.
+- B — Nein.
+EMPFEHLUNG: A — Parserkompatibilität.
+ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]
+
+---
