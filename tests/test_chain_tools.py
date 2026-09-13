@@ -7,6 +7,7 @@ Kopie, und kein stilles Überschreiben einer Handänderung.
 """
 from __future__ import annotations
 
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -106,3 +107,20 @@ def test_globales_check_verschluckt_das_subkommando_nicht(tmp_path: Path) -> Non
 
     (tmp_path / "_tools" / "decisions_db.py").write_text("# fremd\n", encoding="utf-8")
     assert cli.main(["chain-tools", "--chain", str(tmp_path), "--check"]) == 1
+
+
+def test_eingefrorene_fixture_nennt_das_paket_als_quelle() -> None:
+    """Der Kopf der eingefrorenen Kopie muss auf den JETZIGEN Quellort zeigen.
+
+    Bis 2026-09-13 nannte er die Entscheidungskette. Seit die Werkzeuge im Paket
+    liegen und die Kette daraus materialisiert wird, ist das falsch: Wer dem Kopf
+    folgt, landete am Projektionsort statt an der Quelle. Ein Hinweis, den
+    niemand prueft, verrottet genauso still wie die Kopie, vor der er warnt.
+    """
+    kopf = (pathlib.Path(__file__).parent / "data" / "chain" / "_tools"
+            / "decisions_index.py").read_text(encoding="utf-8")[:3000]
+    assert "EINGEFRORENE TESTKOPIE" in kopf
+    assert "src/decision_clicker/chain_tools/decisions_index.py" in kopf, (
+        "Der Kopf muss den Paketpfad als kanonische Quelle nennen")
+    assert "PROJEKTION" in kopf, (
+        "Der Kopf muss sagen, dass <_DECISIONS>/_tools/ kein Quellort mehr ist")

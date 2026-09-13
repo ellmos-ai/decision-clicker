@@ -6,9 +6,15 @@
 # ============================================================================
 #
 # Eingefroren auf VERSION 1.3.0 (Stand 2026-08-27). Die kanonische Fassung
-# lebt in der Entscheidungskette selbst und ist inzwischen weiter:
+# lebt seit T-20260913-545927609 IN DIESEM PAKET:
 #
-#   <_DECISIONS>/_tools/decisions_index.py   -- Stand 2026-09-13: 1.4.0
+#   src/decision_clicker/chain_tools/decisions_index.py   -- Stand 1.4.0
+#
+# Sie lag frueher nur in der Entscheidungskette selbst; dieser Kopf nannte bis
+# zum 2026-09-13 noch jenen Ort. Seit die Kette per
+# `decision-clicker chain-tools` aus dem Paket materialisiert wird, ist
+# <_DECISIONS>/_tools/ eine PROJEKTION und kein Quellort mehr -- dort liegende
+# Dateien tragen ihrerseits einen "MATERIALISIERTE KOPIE"-Kopf.
 #
 # Diese Datei ist AUSSCHLIESSLICH Inventar der Test-Fixture unter
 # tests/data/chain/: sie macht das Fixture-Verzeichnis zu einer
