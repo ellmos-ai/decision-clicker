@@ -9,10 +9,10 @@
 
 ### Supported Versions
 
-| Version | Supported          | Security SLA                         |
-|---------|--------------------|--------------------------------------|
-| 1.1.x   | :white_check_mark: | 48h Acknowledgment / 5-Day Triage    |
-| < 1.1.0 | :x:                | Best effort / Update recommended     |
+| Version | Supported          | Security SLA                                            |
+|---------|--------------------|---------------------------------------------------------|
+| 1.1.x   | :white_check_mark: | 48h Acknowledgment / 5-Day Triage / 30-Day Remediation  |
+| < 1.1.0 | :x:                | Best effort / Update recommended                        |
 
 Security fixes are prioritized for the latest minor release line on the default `master` branch.
 
@@ -25,7 +25,7 @@ If you discover a security vulnerability, please do **NOT** open a public issue.
 - **Organizational Security:** `security@ellmos.ai`
 - **Maintainer Escalation:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
 
-We commit to an initial response acknowledging receipt within **48 hours** and a formal triage assessment within **5 business days**.
+We commit to an initial response acknowledging receipt within **48 hours**, a formal triage assessment within **5 business days**, and a targeted remediation plan or patch release within **30 calendar days**.
 
 ### Deployment Boundary & Threat Model
 
@@ -51,10 +51,10 @@ Decision Clicker is a local-first administrative UI and CLI tool:
 
 ### Unterstützte Versionen
 
-| Version | Unterstützt        | Sicherheits-SLA                      |
-|---------|--------------------|--------------------------------------|
-| 1.1.x   | :white_check_mark: | 48h Eingangsbestätigung / 5 Tage Triage |
-| < 1.1.0 | :x:                | Nach Verfügbarkeit / Update empfohlen |
+| Version | Unterstützt        | Sicherheits-SLA                                           |
+|---------|--------------------|-----------------------------------------------------------|
+| 1.1.x   | :white_check_mark: | 48h Eingangsbestätigung / 5 Tage Triage / 30 Tage Fix-Plan |
+| < 1.1.0 | :x:                | Nach Verfügbarkeit / Update empfohlen                     |
 
 Sicherheitskorrekturen werden für die neueste Version auf dem Standard-Branch `master` bereitgestellt.
 
@@ -67,7 +67,7 @@ Bitte melden Sie Sicherheitslücken **niemals** über öffentliche GitHub Issues
 - **Organisationskontakt:** `security@ellmos.ai`
 - **Maintainer:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
 
-Wir garantieren eine Eingangsbestätigung innerhalb von **48 Stunden** sowie eine fundierte Triage-Rückmeldung innerhalb von **5 Werktagen**.
+Wir garantieren eine Eingangsbestätigung innerhalb von **48 Stunden**, eine fundierte Triage-Rückmeldung innerhalb von **5 Werktagen** sowie einen verbindlichen Behebungsplan bzw. Patch-Release innerhalb von **30 Kalendertagen**.
 
 ### Schutzgrenzen & Sicherheitsmodell
 

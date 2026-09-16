@@ -7,7 +7,10 @@ Shields.io badges, Mermaid diagrams, Governance Invariants, and zero runtime dep
 """
 from __future__ import annotations
 
+import ast
 import json
+import re
+import sys
 from pathlib import Path
 
 from decision_clicker import __version__
@@ -144,17 +147,17 @@ def test_readme_badges_suite():
     expected_badges = [
         "version-1.1.2-blue.svg",
         "CI-passing-brightgreen.svg",
-        "tests-156%20passed%20%7C%20100%25-brightgreen.svg",
+        "tests-236%20passed%20%7C%20100%25-brightgreen.svg",
         "privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg",
         "security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg",
-        "security--SLA-48h%20Response%20%7C%205d%20Triage-informational.svg",
+        "security--SLA-48h%20Response%20%7C%205d%20Triage%20%7C%2030d%20Fix-informational.svg",
         "third--party-audited%20%7C%20zero%20dependencies-green.svg",
         "marketing%20log-active-blue.svg",
         "code%20style-Ruff-black.svg",
         "ecosystem-ellmos--ai-purple.svg",
         "umbrella-open--bricks-orange.svg",
         "LLM-llms.txt-blueviolet.svg",
-        "last%20checked-2026--09--12-informational.svg",
+        "last%20checked-2026--09--16-informational.svg",
         "license-MIT-green.svg",
     ]
     for badge in expected_badges:
@@ -218,7 +221,7 @@ def test_sibling_ecosystem_matrix():
 def test_llms_txt_freshness_and_parity():
     """Verify llms.txt is up to date with version 1.1.2 and recent timestamp."""
     llms_text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-    assert "2026-09-12" in llms_text
+    assert "2026-09-16" in llms_text
     assert "1.1.2" in llms_text
     assert "decision_clicker/api.py" in llms_text
     assert "decision_clicker/writer.py" in llms_text
@@ -302,7 +305,8 @@ def test_third_party_licenses_audit_and_invariants():
     tpl_path = ROOT / "THIRD_PARTY_LICENSES.md"
     assert tpl_path.is_file(), "THIRD_PARTY_LICENSES.md must exist"
     content = tpl_path.read_text(encoding="utf-8")
-    assert "Stand: 2026-09-12 / As of: 2026-09-12" in content
+    assert "Stand: 2026-09-16 / As of: 2026-09-16" in content
+    assert "PEP 639" in content
     assert "INV-LOCAL-01" in content
     assert "INV-NOELEV-03" in content
     assert "INV-LOCK-08" in content
@@ -328,3 +332,102 @@ def test_module_manifest_version_parity():
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert data.get("version") == __version__
     assert data.get("version") == "1.1.2"
+
+
+def test_pep639_license_files_metadata():
+    """Verify pyproject.toml declares PEP 639 license-files and targets exist."""
+    pyproject = _read_toml()
+    project = pyproject.get("project", {})
+    assert "license-files" in project, "pyproject.toml must declare PEP 639 license-files"
+    license_files = project.get("license-files", [])
+    assert "LICENSE" in license_files, "license-files must include LICENSE"
+    assert "THIRD_PARTY_LICENSES.md" in license_files, "license-files must include THIRD_PARTY_LICENSES.md"
+    for lf in license_files:
+        p = ROOT / lf
+        assert p.is_file(), f"Declared license file missing: {lf}"
+        assert p.stat().st_size > 0, f"Declared license file empty: {lf}"
+
+
+def test_gitignore_secret_and_credential_patterns():
+    """Verify .gitignore contains comprehensive secret, cert, key, and multi-host rules."""
+    gitignore_path = ROOT / ".gitignore"
+    content = gitignore_path.read_text(encoding="utf-8")
+    security_patterns = [
+        "*.pem",
+        "*.key",
+        "*.crt",
+        "*.cer",
+        "*.pfx",
+        "*.p12",
+        "*.token",
+        "*.secret",
+        "*secret*.json",
+        "credentials.json",
+        ".npmrc",
+        "id_rsa*",
+        "id_ed25519*",
+        "*.orig",
+        "*.rej",
+        "*-ASUS-GEI*",
+        "*-WORKSTATION-LG*",
+        "CONFLICT_REVIEW_LOG*",
+    ]
+    for pattern in security_patterns:
+        assert pattern in content, f"Missing security pattern in .gitignore: {pattern}"
+
+
+def test_ast_zero_hardcoded_secrets_and_personal_paths():
+    """Verify zero hardcoded API keys, private keys, or personal paths in src/."""
+    src_dir = ROOT / "src"
+    patterns = [
+        (re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"][^'\"]{10,}['\"]"), "API Key"),
+        (re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"), "Private Key"),
+        (re.compile(r"C:\\Users\\lukas", re.IGNORECASE), "Personal path"),
+        (re.compile(r"ghp_[a-zA-Z0-9]{36}"), "GitHub Token"),
+    ]
+    for py_file in src_dir.rglob("*.py"):
+        text = py_file.read_text(encoding="utf-8")
+        ast.parse(text, filename=str(py_file))
+        for regex, desc in patterns:
+            match = regex.search(text)
+            assert not match, f"Found {desc} in {py_file}: {match.group(0) if match else ''}"
+
+
+def test_supply_chain_zero_external_runtime_imports():
+    """Verify runtime source code only imports Python standard library and internal modules."""
+    src_dir = ROOT / "src" / "decision_clicker"
+    internal_modules = {"decision_clicker", "decisions_index", "decisions_db"}
+    stdlib_top_levels = set(sys.stdlib_module_names) if hasattr(sys, "stdlib_module_names") else {
+        "http", "urllib", "json", "pathlib", "subprocess", "argparse", "dataclasses",
+        "re", "shutil", "typing", "os", "sys", "datetime", "uuid", "hashlib", "io"
+    }
+
+    for py_file in src_dir.rglob("*.py"):
+        text = py_file.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(py_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_pkg = alias.name.split(".")[0]
+                    assert (
+                        root_pkg in stdlib_top_levels or root_pkg in internal_modules
+                    ), f"Disallowed runtime import '{alias.name}' in {py_file}"
+            elif isinstance(node, ast.ImportFrom):
+                if node.level and node.level > 0:
+                    continue
+                if node.module:
+                    root_pkg = node.module.split(".")[0]
+                    assert (
+                        root_pkg in stdlib_top_levels or root_pkg in internal_modules
+                    ), f"Disallowed runtime import from '{node.module}' in {py_file}"
+
+
+def test_security_policy_remediation_sla():
+    """Verify SECURITY.md defines 30-day remediation SLA in both English and German."""
+    sec_path = ROOT / "SECURITY.md"
+    content = sec_path.read_text(encoding="utf-8")
+    assert "30-Day Remediation" in content
+    assert "30 calendar days" in content
+    assert "30 Tage Fix-Plan" in content or "30 Tage Behebung" in content
+    assert "30 Kalendertagen" in content
+

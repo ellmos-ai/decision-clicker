@@ -44,10 +44,9 @@ GENERATOR = f"decisions_index.py {VERSION}"
 # Laptop-Pfad C:\Users\User\... codiert. `DECISIONS_ROOT` erlaubt einen
 # expliziten Override (z. B. fuer Tests oder abweichende Layouts); ohne ihn
 # wird der Pfad relativ zum Home-Verzeichnis des jeweiligen Hosts aufgeloest --
-# funktioniert unveraendert auf `C:\Users\User\...` (Laptop) und
-# `C:\Users\lukas\...` (Workstation), ohne dass `--root` zwingend uebergeben
-# werden muss. Siehe .TOPICS/CLAUDE.md: derselbe Fix bereits fuer
-# `.ELLMOS.MIGRATED.md` angewandt (T-20260815-37).
+# funktioniert unveraendert auf `C:\Users\<user>\...` (Workstation / Laptop),
+# ohne dass `--root` zwingend uebergeben werden muss. Siehe .TOPICS/CLAUDE.md:
+# derselbe Fix bereits fuer `.ELLMOS.MIGRATED.md` angewandt (T-20260815-37).
 DEFAULT_ROOT = Path(
     os.environ.get("DECISIONS_ROOT")
     # [C 2026-09-06 USER-MIND-Umzug] Standort-Ableitung statt altem

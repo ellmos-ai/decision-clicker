@@ -37,8 +37,28 @@ _local/
 *-ASUS-GEI.*
 *-WORKSTATION-LG.*
 *-WORKSTATION.*
+*-ASUS-GEI*
+*-WORKSTATION-LG*
 * (kopie)*
 * (copy)*
+CONFLICT_REVIEW_LOG*
+*.orig
+*.rej
+
+# Secrets, credentials, certificates, and private keys
+*.pem
+*.key
+*.crt
+*.cer
+*.pfx
+*.p12
+*.token
+*.secret
+*secret*.json
+credentials.json
+.npmrc
+id_rsa*
+id_ed25519*
 
 # Multi-agent locks (fail-closed concurrency governance)
 LOCK

@@ -1,7 +1,8 @@
 # Third-Party Licenses / Dritte-Partei-Lizenzen
 
-> **Audit Stamp:** Stand: 2026-09-12 / As of: 2026-09-12
-> **Supply-Chain Integrity:** 100% Permissive Open Source (PSFL, MIT, Apache-2.0). Zero AGPL/SSPL copyleft contamination.
+> **Audit Stamp:** Stand: 2026-09-16 / As of: 2026-09-16
+> **Metadata Standard:** PEP 639 compliant (`license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]`)
+> **Supply-Chain Integrity:** 100% Permissive Open Source (PSFL, MIT, Apache-2.0). Zero AGPL/SSPL copyleft contamination. Zero external runtime dependencies.
 
 ## Runtime Dependencies
 

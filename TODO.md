@@ -14,6 +14,20 @@
 
 ---
 
+## AI Security & Dependency Audit — 2026-09-16
+
+- **Auditor:** Gemini / Antigravity (`ai-security-and-dependency-audit` sidecar)
+- **Status:** Complete / Clean (100% green)
+- **Prüfumfang & Nachweise:**
+  * PEP 639 Compliance: `license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]` in `pyproject.toml`.
+  * `.gitignore` Hardening: Ergänzung von Zertifikaten, Schlüsseln, Token (`*.pem`, `*.key`, `*.token`, `*.secret`, `credentials.json`, `.npmrc`), Merge-Resten (`*.orig`, `*.rej`) und Sync-Konflikt-Mustern (`*-ASUS-GEI*`, `*-WORKSTATION-LG*`, `CONFLICT_REVIEW_LOG*`).
+  * Supply-Chain & Runtime-Unabhängigkeit: 0 externe Runtime-Dependencies (ausschließlich Python-Standardbibliothek); `pip check` sauber (0 defekte Requirements).
+  * AST- & Secret-Scan: 0 unberechtigte Anmeldedaten, 0 private Schlüssel, 0 hardcodierte Nutzerpfade in tracked Quell- und Konfigurationsdateien.
+  * Sicherheits-SLA: 30-Tage-Behebungszusage in `SECURITY.md` zweisprachig fixiert.
+  * Vertragstests: 5 neue automatisierte Prüfgates in `tests/test_metadata.py` hinzugefügt; vollständige Testsuite mit 161 Tests erfolgreich (100% bestanden).
+
+---
+
 ## TASKWRITER-Review — 2026-09-05
 
 - Bundle: `bec6d73c-449e-4075-9b0a-46d772315cdc` · selector review

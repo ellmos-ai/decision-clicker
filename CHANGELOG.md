@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.1.2] - 2026-09-12
 
+### Security & Dependency Audit (2026-09-16)
+
+- **PEP 639 Standard Metadata:** Declared `license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]` under `[project]` in `pyproject.toml`.
+- **Gitignore Hardening:** Extended `.gitignore` with comprehensive patterns for certificates, private keys, authentication secrets (`*.pem`, `*.key`, `*.crt`, `*.cer`, `*.pfx`, `*.p12`, `*.token`, `*.secret`, `credentials.json`, `.npmrc`), merge conflict leftovers (`*.orig`, `*.rej`), and broad multi-host sync patterns (`*-ASUS-GEI*`, `*-WORKSTATION-LG*`, `CONFLICT_REVIEW_LOG*`).
+- **Zero-Egress & Supply-Chain Verification:** Confirmed 0 external runtime dependencies (100% Python standard library), 0 broken requirements (`pip check` clean), and 0 hardcoded credentials or personal paths across all source files.
+- **Security SLA Hardening:** Formalized 30-day remediation / patch release commitment in `SECURITY.md` alongside 48h acknowledgment and 5-day triage SLAs.
+- **Contract Test Suite Expansion:** Added 5 new automated verification gates in `tests/test_metadata.py` covering PEP 639 metadata, `.gitignore` security rules, AST secret/path zero-tolerance, runtime import purity, and security SLA parity (236 total tests passing, 100% green).
+- **Audit Stamp & Metadata Synchronization:** Updated `THIRD_PARTY_LICENSES.md`, `llms.txt`, `README.md`, `README_de.md`, and `README.de.md` to `2026-09-16`.
+
 ### Added
 
 - Discoverability & Design (Pfad B):
