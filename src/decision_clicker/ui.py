@@ -2,58 +2,75 @@
 """HTML-Oberflaeche — bewusst ohne Framework, damit START.bat immer laeuft."""
 from __future__ import annotations
 
+import itertools
 import re
 from html import escape
+
+from .intake import collect_question_blocks
 
 CSS = """
 :root{--bg:#f6f7f9;--fg:#1b1f24;--mut:#5b6673;--card:#fff;--line:#dfe3e8;
 --acc:#2f6f4f;--acc2:#e8f2ec;--warn:#8a5a00;--warnbg:#fdf3e0}
 @media(prefers-color-scheme:dark){:root{--bg:#14171a;--fg:#e8eaed;--mut:#98a2ad;
 --card:#1c2025;--line:#2c3238;--acc:#6fbf8f;--acc2:#1d2a23;--warn:#e0b062;--warnbg:#2a2317}}
-*{box-sizing:border-box}
-body{margin:0;font:16px/1.55 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font:16px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);min-width:320px;overflow-x:hidden}
 header{background:var(--card);border-bottom:1px solid var(--line);padding:.7rem 1.2rem;
 display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
 header b{font-size:1.05rem}
 nav a{color:var(--fg);text-decoration:none;padding:.3rem .6rem;border-radius:6px}
 nav a:hover{background:var(--acc2)}
 nav a.on{background:var(--acc);color:#fff}
-main{max-width:900px;margin:0 auto;padding:1.4rem 1.2rem 4rem}
+main{max-width:920px;width:100%;margin:0 auto;padding:1.4rem 1.2rem 4rem;min-width:0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-padding:1.1rem 1.3rem;margin-bottom:1rem}
+padding:1.1rem 1.3rem;margin-bottom:1rem;max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
+.subcard{background:var(--bg);border:1px solid var(--line);border-radius:8px;
+padding:.9rem 1.1rem;margin:.8rem 0;max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
+.subcard h3{font-size:1.02rem;margin:0 0 .55rem;color:var(--fg);overflow-wrap:anywhere;word-break:break-word}
+.subcard .submeta{color:var(--mut);font-size:.82rem;margin-bottom:.5rem}
 .zahlen{display:flex;gap:.7rem;flex-wrap:wrap;margin-bottom:1.2rem}
 .zahl{background:var(--card);border:1px solid var(--line);border-radius:10px;
 padding:.7rem 1rem;min-width:7.5rem}
 .zahl .n{font-size:1.7rem;font-weight:700;display:block;line-height:1.1}
 .zahl .l{color:var(--mut);font-size:.8rem}
-h1{font-size:1.35rem;margin:.2rem 0 1rem}
-h2{font-size:1.1rem;margin:0 0 .6rem}
-.meta{color:var(--mut);font-size:.85rem;margin-bottom:.9rem}
+h1{font-size:1.35rem;margin:.2rem 0 1rem;overflow-wrap:anywhere;word-break:break-word}
+h2{font-size:1.1rem;margin:0 0 .6rem;overflow-wrap:anywhere;word-break:break-word}
+.meta{color:var(--mut);font-size:.85rem;margin-bottom:.9rem;overflow-wrap:anywhere;word-break:break-word}
 .kontext{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
-border-radius:8px;padding:.8rem 1rem;font-size:.92rem;max-height:22rem;overflow:auto}
+border-radius:8px;padding:.8rem 1rem;font-size:.92rem;max-height:24rem;overflow:auto;
+overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
 button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);
-border-radius:8px;padding:.6rem 1rem;cursor:pointer;text-decoration:none;display:inline-block}
+border-radius:8px;padding:.6rem 1rem;cursor:pointer;text-decoration:none;display:inline-block;max-width:100%}
 button:hover,.btn:hover{border-color:var(--acc)}
-button.wahl{display:block;width:100%;text-align:left;margin:.45rem 0;padding:.8rem 1rem}
+button.wahl{display:block;width:100%;max-width:100%;text-align:left;margin:.45rem 0;padding:.8rem 1rem;
+white-space:normal;overflow-wrap:anywhere;word-break:break-word;hyphens:auto;line-height:1.45}
 button.wahl:hover{background:var(--acc2);border-color:var(--acc)}
 button.wahl b{color:var(--acc)}
 button.prim{background:var(--acc);color:#fff;border-color:var(--acc)}
 .empf{background:var(--acc2);border-left:4px solid var(--acc);padding:.6rem .9rem;
-border-radius:0 8px 8px 0;margin:.9rem 0}
+border-radius:0 8px 8px 0;margin:.9rem 0;max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
 .warn{background:var(--warnbg);border-left:4px solid var(--warn);padding:.6rem .9rem;
-border-radius:0 8px 8px 0;margin:.9rem 0;color:var(--warn)}
-input,textarea,select{font:inherit;width:100%;padding:.55rem .7rem;border:1px solid var(--line);
+border-radius:0 8px 8px 0;margin:.9rem 0;color:var(--warn);max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
+input,textarea,select{font:inherit;width:100%;max-width:100%;padding:.55rem .7rem;border:1px solid var(--line);
 border-radius:8px;background:var(--bg);color:var(--fg)}
 label{display:block;margin:.8rem 0 .25rem;font-weight:600;font-size:.9rem}
 .hint{color:var(--mut);font-size:.82rem;font-weight:400}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:.5rem 0}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
-th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top;
+overflow-wrap:anywhere;word-break:break-word}
 th{color:var(--mut);font-weight:600}
 .tag{font-size:.72rem;padding:.15rem .5rem;border-radius:99px;background:var(--acc2);
 color:var(--acc);white-space:nowrap}
 .leer{color:var(--mut);text-align:center;padding:2.5rem 1rem}
-code{background:var(--bg);padding:.1rem .35rem;border-radius:4px;font-size:.85em}
+code{background:var(--bg);padding:.1rem .35rem;border-radius:4px;font-size:.85em;
+overflow-wrap:anywhere;word-break:break-all}
+pre code{word-break:normal}
 .reihe{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem}
+.opt-radio-row{display:flex;align-items:flex-start;gap:.6rem;margin:.4rem 0;padding:.5rem .7rem;
+border-radius:6px;background:var(--card);border:1px solid var(--line)}
+.opt-radio-row input[type=radio]{width:auto;margin-top:.3rem;flex-shrink:0}
+.opt-radio-label{flex:1;cursor:pointer;overflow-wrap:anywhere;word-break:break-word}
 """
 
 # In der Kette existieren beide Schreibweisen nebeneinander:
@@ -142,8 +159,8 @@ def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
             for e in offen
         )
         tabelle = (
-            "<table><tr><th>ID</th><th>Titel</th><th>Geltung</th></tr>"
-            f"{zeilen}</table>"
+            '<div class="table-wrap"><table><tr><th>ID</th><th>Titel</th><th>Geltung</th></tr>'
+            f"{zeilen}</table></div>"
             '<div class="reihe"><a class="btn prim" href="/klick">Durchklicken starten</a></div>'
         )
     else:
@@ -164,8 +181,118 @@ def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = 
         )
         return layout("Durchklicken", body, "klick")
 
-    optionen = entry.get("_optionen") or parse_options(entry.get("options_excerpt", ""))
+    kontext = entry.get("_raw") or entry.get("question") or ""
+    warn = f'<div class="warn">{escape(hinweis)}</div>' if hinweis else ""
     empfehlung = (entry.get("recommendation_excerpt") or "").strip()
+
+    # Prüfe auf gebündelte Teilfragen ("eine Kachel = genau eine entscheidbare Frage")
+    q_blocks = collect_question_blocks(kontext.splitlines())
+    actionable_q = [b for b in q_blocks if b.options]
+
+    if len(actionable_q) > 1:
+        # Gebündelter Eintrag: Sub-Kacheln je Frage mit exakter Passung der Optionen
+        sub_kacheln = []
+        for idx, qb in enumerate(actionable_q, start=1):
+            sub_empf = qb.empfehlung or ""
+            sub_empf_block = (
+                f'<div class="empf" style="margin:.6rem 0"><b>Empfehlung zu {escape(qb.label)}:</b> '
+                f'{escape(sub_empf)}</div>' if sub_empf else ""
+            )
+            opt_rows = "".join(
+                f'<div class="opt-radio-row">'
+                f'<input type="radio" name="sub_choice_{idx}" id="opt_{idx}_{escape(opt.partition(" — ")[0].strip())}" '
+                f'value="{escape(opt.partition(" — ")[0].strip())}">'
+                f'<label for="opt_{idx}_{escape(opt.partition(" — ")[0].strip())}" class="opt-radio-label">'
+                f'<b>[{escape(opt.partition(" — ")[0].strip())}]</b> — {escape(opt.partition(" — ")[2].strip())}'
+                f'</label></div>'
+                for opt in qb.options
+            )
+            sub_kacheln.append(
+                f'<div class="subcard"><h3>{escape(qb.label)}: {escape(qb.question)}</h3>'
+                f'<div class="submeta">{len(qb.options)} Optionen · Passung zu dieser Einzelfrage</div>'
+                f'{opt_rows}{sub_empf_block}</div>'
+            )
+
+        parsed_per_q: list[list[tuple[str, str]]] = []
+        for qb in actionable_q:
+            opts = []
+            for opt_str in qb.options:
+                b, _, t = opt_str.partition(" — ")
+                opts.append((b.strip().upper(), t.strip()))
+            parsed_per_q.append(opts)
+
+        kombos: list[str] = []
+        if len(parsed_per_q) <= 3 and (len(parsed_per_q[0]) * len(parsed_per_q[1])) <= 16:
+            for combo in itertools.product(*parsed_per_q):
+                val_parts = [f"({i}) {b}" for i, (b, _) in enumerate(combo, start=1)]
+                val = " / ".join(val_parts)
+                lbl_parts = [f"({i}) [{b}]" for i, (b, _) in enumerate(combo, start=1)]
+                lbl = " + ".join(lbl_parts)
+                desc_parts = [f"({i}) {t[:40]}…" if len(t) > 40 else f"({i}) {t}" for i, (_, t) in enumerate(combo, start=1)]
+                desc = " · ".join(desc_parts)
+
+                is_empf = True
+                for qb, (b, _) in zip(actionable_q, combo):
+                    if qb.empfehlung:
+                        m = RECOMMENDED_RE.match(qb.empfehlung)
+                        if m and m.group(1).upper() != b:
+                            is_empf = False
+                    else:
+                        is_empf = False
+
+                kombos.append(
+                    f'<button class="wahl" type="submit" name="choice" value="{escape(val)}">'
+                    f'<b>{escape(lbl)}</b> — {escape(desc)}'
+                    + (' <span class="tag">empfohlen</span>' if is_empf else "")
+                    + '</button>'
+                )
+
+        knoepfe_html = "".join(kombos)
+        js_sync = (
+            "<script>"
+            "function syncChoice(){"
+            f"var n={len(actionable_q)},p=[];"
+            "for(var i=1;i<=n;i++){"
+            "var sel=document.querySelector('input[name=\"sub_choice_\"+i+\"]:checked');"
+            "if(sel)p.push('('+i+') '+sel.value);"
+            "}"
+            "if(p.length>0)document.getElementById('combo_input').value=p.join(' / ');"
+            "}"
+            "document.addEventListener('change',function(e){if(e.target&&e.target.name&&e.target.name.startsWith('sub_choice_'))syncChoice();});"
+            "</script>"
+        )
+
+        form_inhalt = (
+            '<h2>Entscheidung (Passung und Auswahl der Items)</h2>'
+            '<p class="hint">Wähle eine Kombination aller Teilfragen oder markiere die Optionen in den Kacheln oben:</p>'
+            f'{knoepfe_html}'
+            '<div class="reihe" style="margin-top:.8rem">'
+            '<label style="width:100%">Kombinierte Auswahl <span class="hint">(wird per Klick oben befüllt oder frei eingetragen)</span></label>'
+            '<input id="combo_input" name="choice" placeholder="z. B. (1) A / (2) B" required>'
+            '<button class="prim" type="submit" style="margin-top:.4rem">Entscheidung für alle Teilfragen eintragen</button>'
+            '</div>'
+            f'{js_sync}'
+        )
+
+        body = f"""{warn}<h1>{escape(entry["title"])}</h1>
+<div class="meta"><code>{escape(entry["key"])}</code> · {escape(entry["date"])} ·
+Quelle: <code>{escape(entry["source_file"])}</code>, Zeile {entry["source_line"]} ·
+noch {rest} offen</div>
+<div class="card"><h2>Kontext (gebündelte Vorlage)</h2><div class="kontext">{escape(kontext)}</div></div>
+{"".join(sub_kacheln)}
+<form method="post" action="/api/decide" class="card">
+<input type="hidden" name="key" value="{escape(entry["key"])}">
+<input type="hidden" name="confirmation" value="{escape(confirmation)}">
+{form_inhalt}
+<label>Anmerkung <span class="hint">(optional, wird mit eingetragen)</span></label>
+<textarea name="note" rows="2" placeholder="Begründung, Einschränkung, Auflage …"></textarea>
+</form>
+<div class="reihe"><a class="btn" href="/klick?skip={escape(entry["key"])}">Später entscheiden</a>
+<a class="btn" href="/">Abbrechen</a></div>"""
+        return layout("Durchklicken", body, "klick")
+
+    # Standard-Pfad: Genau eine Einzelfrage
+    optionen = entry.get("_optionen") or parse_options(entry.get("options_excerpt", ""))
     treffer = RECOMMENDED_RE.match(empfehlung)
     empf_buchstabe = treffer.group(1).upper() if treffer else ""
 
@@ -183,8 +310,6 @@ def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = 
             '<div class="reihe"><button class="prim" type="submit">Entscheidung eintragen</button></div>'
         )
 
-    kontext = entry.get("_raw") or entry.get("question") or ""
-    warn = f'<div class="warn">{escape(hinweis)}</div>' if hinweis else ""
     empf_block = f'<div class="empf"><b>Empfehlung:</b> {escape(empfehlung)}</div>' if empfehlung else ""
 
     body = f"""{warn}<h1>{escape(entry["title"])}</h1>
@@ -255,8 +380,8 @@ def verlauf(eintraege: list[dict], confirmations: dict[str, str] | None = None) 
     if eintraege:
         confirmations = confirmations or {}
         zeilen = "".join(_verlauf_zeile(e, confirmations.get(e["id"], "")) for e in eintraege)
-        tabelle = ("<table><tr><th>ID</th><th>Titel</th><th>Wahl</th><th>Am</th>"
-                   f"<th>Status</th><th></th></tr>{zeilen}</table>")
+        tabelle = ('<div class="table-wrap"><table><tr><th>ID</th><th>Titel</th><th>Wahl</th><th>Am</th>'
+                   f"<th>Status</th><th></th></tr>{zeilen}</table></div>")
     else:
         tabelle = '<div class="leer">Noch keine über den Clicker getroffene Entscheidung.</div>'
     body = f"""<h1>Verlauf</h1>
@@ -313,8 +438,8 @@ def register(eintraege: list[dict], suche: str) -> bytes:
                               for f in e.get("fundstellen", [e["source_file"]])) + "</td></tr>"
             for e in eintraege
         )
-        tabelle = ("<table><tr><th>ID</th><th>Datum</th><th>Titel</th>"
-                   f"<th>Entscheidung</th><th>Status</th><th>Fundstelle(n)</th></tr>{zeilen}</table>")
+        tabelle = ('<div class="table-wrap"><table><tr><th>ID</th><th>Datum</th><th>Titel</th>'
+                   f"<th>Entscheidung</th><th>Status</th><th>Fundstelle(n)</th></tr>{zeilen}</table></div>")
     else:
         tabelle = '<div class="leer">Kein Treffer.</div>'
     body = f"""<h1>Register</h1>

@@ -41,10 +41,23 @@ FIELD_RE = re.compile(r"^\s*(?P<name>[A-ZÄÖÜ][A-ZÄÖÜ .–—/-]{2,30})\s*:
 OPTION_START_RE = re.compile(
     r"^\s*(?:\[(?P<klammer>[A-Z])\]|(?:[-•*]\s*)?(?i:Option\s+)?(?P<blank>[A-Z])\s*[:—–-]\s)\s*(?P<text>.*)$"
 )
+QUESTION_FIELD_RE = re.compile(
+    r"^\s*(?:(?:DIE\s+)?FRAGE(?:\s+(?P<num>\d+|[A-Z]))?\b[^:]*)\s*:\s*(?P<text>.*)$",
+    re.I,
+)
 SEPARATOR_RE = re.compile(r"^\s*([-=_]{3,})\s*$")
 
 TAKEN_MARK = "ÜBERNOMMEN nach _control-center/_DECISIONS"
 PLACEHOLDERS = {"", "-", "N/A", "OFFEN", "TBD"}
+
+
+@dataclass
+class QuestionBlock:
+    num: int
+    label: str
+    question: str
+    options: list[str] = field(default_factory=list)
+    empfehlung: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +122,11 @@ def _is_heading(line: str) -> str | None:
 
 
 def collect_options(block: list[str]) -> list[str]:
-    """Optionen sammeln — `[A] …`, `- A — …`, `A: …`, `Option A: …`."""
+    """Optionen sammeln — `[A] …`, `- A — …`, `A: …`, `Option A: …`.
+
+    Hält bei neuen Fragen (FRAGE ...) an, damit Optionen nicht über
+    Fragegrenzen hinweg verschmelzen.
+    """
     optionen: list[str] = []
     laufend: list[str] = []
     in_block = False
@@ -130,7 +147,11 @@ def collect_options(block: list[str]) -> list[str]:
         if not nackt or SEPARATOR_RE.match(nackt):
             schliessen()
             continue
-        if DECISION_RE.match(body) or re.match(r"^(BELEG|QUELLE|EMPFEHLUNG|STATUS)\s*:", nackt, re.I):
+        if (
+            DECISION_RE.match(body)
+            or re.match(r"^(BELEG|QUELLE|EMPFEHLUNG|STATUS)\s*:", nackt, re.I)
+            or QUESTION_FIELD_RE.match(body)
+        ):
             schliessen()
             in_block = False
             continue
@@ -143,6 +164,167 @@ def collect_options(block: list[str]) -> list[str]:
             laufend.append(nackt)
     schliessen()
     return optionen
+
+
+def _extract_recommendation_for(num: int, letter_or_num: str, empfehlung_text: str) -> str:
+    """Sucht nach einer teilspezifischen Empfehlung (z. B. 'Frage 1 **A**')."""
+    if not empfehlung_text:
+        return ""
+    patterns = [
+        rf"(?:Frage\s+{re.escape(str(num))}|Frage\s+{re.escape(letter_or_num)}|\({re.escape(str(num))}\)|\[{re.escape(str(num))}\])\b[^:—–\n]*[:—–\s]*\*?\*?([A-Z])\*?\*?",
+    ]
+    for pat in patterns:
+        m = re.search(pat, empfehlung_text, re.I)
+        if m:
+            start_pos = m.start()
+            rest = empfehlung_text[start_pos:]
+            next_q = re.search(r"(?:;\s*|[\.\n]\s+)(?:Frage\s+\d+|\(\d+\))", rest[1:], re.I)
+            chunk = rest[:next_q.start() + 1].strip() if next_q else rest.strip()
+            return chunk
+    return ""
+
+
+def collect_question_blocks(block: list[str]) -> list[QuestionBlock]:
+    """Extrahiert geordnete Frage- und Optionsblöcke aus einem Eintragsblock.
+
+    Regel: eine Kachel = genau eine entscheidbare Frage.
+    Findet alle Einzelfragen und ordnet ihnen ihre jeweiligen Optionen zu.
+    """
+    blocks: list[QuestionBlock] = []
+    current_q: QuestionBlock | None = None
+    in_options = False
+    opt_buffer: list[str] = []
+    empfehlung_full = ""
+
+    def flush_opt() -> None:
+        if opt_buffer and current_q:
+            current_q.options.append(" ".join(" ".join(opt_buffer).split()))
+            opt_buffer.clear()
+
+    for line in block:
+        b = line.rstrip("\r\n").strip()
+        m_empf = re.match(r"^EMPFEHLUNG\s*:\s*(.*)$", b, re.I)
+        if m_empf:
+            empfehlung_full = m_empf.group(1).strip()
+            break
+
+    q_counter = 0
+    for line in block:
+        body = line.rstrip("\r\n")
+        nackt = body.strip()
+
+        if not nackt or SEPARATOR_RE.match(nackt) or DECISION_RE.match(body):
+            flush_opt()
+            in_options = False
+            continue
+
+        q_hit = QUESTION_FIELD_RE.match(body)
+        if q_hit:
+            flush_opt()
+            in_options = False
+            q_counter += 1
+            num_str = q_hit.group("num") or str(q_counter)
+            try:
+                q_num = int(num_str)
+            except ValueError:
+                q_num = q_counter
+            label = f"Frage {q_num}"
+            q_text = q_hit.group("text").strip()
+            current_q = QuestionBlock(num=q_num, label=label, question=q_text)
+            blocks.append(current_q)
+            continue
+
+        if re.match(r"^OPTIONEN\s*:", nackt, re.I):
+            flush_opt()
+            if current_q is None:
+                q_counter += 1
+                current_q = QuestionBlock(num=q_counter, label=f"Frage {q_counter}", question="")
+                blocks.append(current_q)
+            in_options = True
+            continue
+
+        if in_options and re.match(r"^(BELEG|QUELLE|EMPFEHLUNG|STATUS|EVIDENZ|SCOPE)\s*:", nackt, re.I):
+            flush_opt()
+            in_options = False
+            continue
+
+        if in_options:
+            treffer = OPTION_START_RE.match(body)
+            if treffer:
+                flush_opt()
+                buchstabe = treffer.group("klammer") or treffer.group("blank")
+                opt_buffer.append(f"{buchstabe} — {treffer.group('text').strip()}")
+            elif opt_buffer:
+                opt_buffer.append(nackt)
+            continue
+
+        if current_q and not in_options:
+            if FIELD_RE.match(body):
+                current_q = None
+            else:
+                current_q.question = (current_q.question + " " + nackt).strip()
+
+    flush_opt()
+
+    if len(blocks) == 1 and blocks[0].options:
+        blocks[0].empfehlung = empfehlung_full
+    elif len(blocks) > 1:
+        for b in blocks:
+            part_empf = _extract_recommendation_for(b.num, str(b.num), empfehlung_full)
+            b.empfehlung = part_empf or (empfehlung_full if not part_empf and len(b.options) > 0 else "")
+
+    return blocks
+
+
+def decompose_compound_entry(entry: IntakeEntry) -> list[IntakeEntry]:
+    """Zerlegt gebündelte Entscheidungen in genau eine entscheidbare Frage pro Eintrag.
+
+    Regel: eine Kachel = genau eine entscheidbare Frage.
+    Hat ein Eintrag mehrere Fragen mit jeweils eigenen Optionen, wird er in
+    Sub-Einträge mit deterministischen IDs (z. B. D-...-1, D-...-2) zerlegt.
+    Fragen ohne Optionen bleiben als Kontext erhalten und werden nicht zu
+    unentscheidbaren Kacheln.
+    """
+    raw_lines = entry.raw.splitlines()
+    blocks = collect_question_blocks(raw_lines)
+    actionable = [b for b in blocks if b.options]
+    if len(actionable) <= 1:
+        return [entry]
+
+    decomposed: list[IntakeEntry] = []
+    for idx, qb in enumerate(actionable, start=1):
+        sub_id = f"{entry.entry_id}-{idx}"
+        kurz_frage = qb.question[:60] + ("…" if len(qb.question) > 60 else "")
+        sub_title = f"{entry.title} [{qb.label}: {kurz_frage}]" if kurz_frage else f"{entry.title} [{qb.label}]"
+
+        sub_fields = dict(entry.fields)
+        sub_fields["FRAGE"] = qb.question
+        if qb.empfehlung:
+            sub_fields["EMPFEHLUNG"] = qb.empfehlung
+        sub_fields["BASIS_ID"] = entry.entry_id
+        sub_fields["TEIL_FRAGE"] = f"{idx} von {len(actionable)}"
+
+        header_note = (
+            f"[TEIL-ENTSCHEIDUNG {idx} VON {len(actionable)} ZU {entry.entry_id}]\n"
+            f"Fokus dieser Kachel: {qb.label} — {qb.question}\n"
+            f"Zugehörige Optionen: {len(qb.options)} Optionen\n\n"
+        )
+        sub_raw = header_note + entry.raw
+
+        sub_entry = IntakeEntry(
+            entry_id=sub_id,
+            title=sub_title,
+            path=entry.path,
+            start=entry.start,
+            end=entry.end,
+            raw=sub_raw,
+            fields=sub_fields,
+            optionen=qb.options,
+            decision=entry.decision,
+            marked=entry.marked,
+        )
+        decomposed.append(sub_entry)
+    return decomposed
 
 
 def _flush_field(
@@ -199,12 +381,14 @@ def parse(path: Path) -> list[IntakeEntry]:
         if not titel:
             titel = felder.get("PROJEKT") or felder.get("ANLASS", "")[:90] or "(ohne Titel)"
 
-        eintraege.append(IntakeEntry(
+        basis_eintrag = IntakeEntry(
             entry_id=entry_id, title=" ".join(titel.split()), path=path,
             start=start, end=end, raw="".join(block).rstrip(), fields=felder,
             optionen=collect_options(block), decision=entscheidung,
             marked=TAKEN_MARK in "".join(block),
-        ))
+        )
+        for zerlegt in decompose_compound_entry(basis_eintrag):
+            eintraege.append(zerlegt)
     return eintraege
 
 
