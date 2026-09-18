@@ -14,7 +14,8 @@ CSS = """
 @media(prefers-color-scheme:dark){:root{--bg:#14171a;--fg:#e8eaed;--mut:#98a2ad;
 --card:#1c2025;--line:#2c3238;--acc:#6fbf8f;--acc2:#1d2a23;--warn:#e0b062;--warnbg:#2a2317}}
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;font:16px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);min-width:320px;overflow-x:hidden}
+body{margin:0;font:16px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);
+min-width:320px;overflow-x:hidden}
 header{background:var(--card);border-bottom:1px solid var(--line);padding:.7rem 1.2rem;
 display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
 header b{font-size:1.05rem}
@@ -50,7 +51,8 @@ button.prim{background:var(--acc);color:#fff;border-color:var(--acc)}
 .empf{background:var(--acc2);border-left:4px solid var(--acc);padding:.6rem .9rem;
 border-radius:0 8px 8px 0;margin:.9rem 0;max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
 .warn{background:var(--warnbg);border-left:4px solid var(--warn);padding:.6rem .9rem;
-border-radius:0 8px 8px 0;margin:.9rem 0;color:var(--warn);max-width:100%;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
+border-radius:0 8px 8px 0;margin:.9rem 0;color:var(--warn);max-width:100%;overflow-wrap:anywhere;
+word-break:break-word;hyphens:auto}
 input,textarea,select{font:inherit;width:100%;max-width:100%;padding:.55rem .7rem;border:1px solid var(--line);
 border-radius:8px;background:var(--bg);color:var(--fg)}
 label{display:block;margin:.8rem 0 .25rem;font-weight:600;font-size:.9rem}
@@ -228,11 +230,14 @@ def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = 
                 val = " / ".join(val_parts)
                 lbl_parts = [f"({i}) [{b}]" for i, (b, _) in enumerate(combo, start=1)]
                 lbl = " + ".join(lbl_parts)
-                desc_parts = [f"({i}) {t[:40]}…" if len(t) > 40 else f"({i}) {t}" for i, (_, t) in enumerate(combo, start=1)]
+                desc_parts = [
+                    f"({i}) {t[:40]}…" if len(t) > 40 else f"({i}) {t}"
+                    for i, (_, t) in enumerate(combo, start=1)
+                ]
                 desc = " · ".join(desc_parts)
 
                 is_empf = True
-                for qb, (b, _) in zip(actionable_q, combo):
+                for qb, (b, _) in zip(actionable_q, combo, strict=True):
                     if qb.empfehlung:
                         m = RECOMMENDED_RE.match(qb.empfehlung)
                         if m and m.group(1).upper() != b:
@@ -264,12 +269,15 @@ def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = 
 
         form_inhalt = (
             '<h2>Entscheidung (Passung und Auswahl der Items)</h2>'
-            '<p class="hint">Wähle eine Kombination aller Teilfragen oder markiere die Optionen in den Kacheln oben:</p>'
+            '<p class="hint">'
+            'Wähle eine Kombination aller Teilfragen oder markiere die Optionen in den Kacheln oben:</p>'
             f'{knoepfe_html}'
             '<div class="reihe" style="margin-top:.8rem">'
-            '<label style="width:100%">Kombinierte Auswahl <span class="hint">(wird per Klick oben befüllt oder frei eingetragen)</span></label>'
+            '<label style="width:100%">Kombinierte Auswahl '
+            '<span class="hint">(wird per Klick oben befüllt oder frei eingetragen)</span></label>'
             '<input id="combo_input" name="choice" placeholder="z. B. (1) A / (2) B" required>'
-            '<button class="prim" type="submit" style="margin-top:.4rem">Entscheidung für alle Teilfragen eintragen</button>'
+            '<button class="prim" type="submit" style="margin-top:.4rem">'
+            'Entscheidung für alle Teilfragen eintragen</button>'
             '</div>'
             f'{js_sync}'
         )
