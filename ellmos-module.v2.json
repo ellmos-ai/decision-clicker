@@ -6,7 +6,7 @@
   "category": "control",
   "kind": "tool",
   "status": "active",
-  "visibility": "private",
+  "visibility": "public",
   "provides": [
     "decision.clicker",
     "decisions.propose",
