@@ -64,13 +64,13 @@ flowchart TD
         direction TB
         B1["Loopback Server (`127.0.0.1:8096`)"]
         B2["Host & Origin Matcher (Anti-CSRF)"]
-        B3["`X-Decision-Clicker: 1` Header Gate"]
+        B3["X-Decision-Clicker: 1 Header Gate"]
         B4["Process-Local Write Serializer"]
     end
 
     subgraph ENGINE_TIER["Core Engine & Integration Seams"]
         direction TB
-        C1["`DecisionClicker` API Facade (`api.py`)"]
+        C1["DecisionClicker API Facade (`api.py`)"]
         C2["Legacy Intake Parser (`intake.py`)"]
         C3["External Index Adapter (`chain.py`)"]
         C4["Guarded Writer Engine (`writer.py`)"]
