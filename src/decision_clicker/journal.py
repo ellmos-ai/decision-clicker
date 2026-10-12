@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .config import Settings
 from .errors import StarUnavailable
-from .star import JOURNAL_DIR, Transaction, _denied, inflight_version
+from .star import JOURNAL_DIR, TMP_SUFFIX, Transaction, _denied, inflight_version
 
 SCHEMA = "decision-clicker.journal.v1"
 ACTIVE_NAME = "TO-DECIDE-USER.txt"
@@ -81,7 +81,8 @@ class Journal:
     def _store(self) -> None:
         from . import writer  # spaet: writer importiert dieses Modul
         self.data["checksum"] = _checksum(self.data)
-        writer._write(self.settings, self.path, json.dumps(self.data, ensure_ascii=False, indent=1) + "\n", False)
+        body = {k: v for k, v in self.data.items() if not k.startswith("_")}
+        writer._write(self.settings, self.path, json.dumps(body, ensure_ascii=False, indent=1) + "\n", False)
 
     def intend(self, name: str, digest: str) -> None:
         """Vor dem Schreiben einer Kettendatei: ihren kuenftigen Hash vermerken (nur fuer den naechsten Schritt)."""
@@ -97,10 +98,54 @@ class Journal:
         self.data["hashes_after"][step] = chain_hashes(self.settings)
         self._store()
 
+    def mark_aborted(self) -> None:
+        """Rollback ist durch: die Kette gilt jetzt (und nur jetzt) als sauber zurueckgerollt."""
+        self.data["aborted"] = chain_hashes(self.settings)
+        self._store()
+
+    def close_if_proven(self) -> None:
+        """Fehlerpfad: das Journal nur loeschen, wenn die Kette nachweislich dem Vorher-Zustand oder dem
+        vermerkten Rollback-Zustand entspricht; sonst bleibt es fuer die Recovery liegen."""
+        local = chain_hashes(self.settings)
+        if local == self.data["hashes_before"] or local == self.data.get("aborted"):
+            self.close()
+
     def close(self) -> None:
         from . import writer
         self.tx.journal = None
         writer._unlink(self.settings, self.path)
+
+
+def _hash_map(value) -> bool:
+    return (isinstance(value, dict) and set(value) == {ACTIVE_NAME, DONE_NAME}
+            and all(v is None or (isinstance(v, str) and len(v) == 64) for v in value.values()))
+
+
+def _validate(data: dict, path: Path) -> None:
+    """Typen und Schrittfolge; jede Abweichung ist ``journal_corrupt`` (ValueError)."""
+    if (not isinstance(data, dict) or data.get("schema") != SCHEMA or data.get("txid") != path.stem
+            or data.get("checksum") != _checksum(data)):
+        raise ValueError("Pruefsumme oder Schema stimmt nicht")
+    op, steps, done = data.get("op"), data.get("steps"), data.get("done")
+    if op not in STEP_FILE or steps != list(STEP_FILE[op]):
+        raise ValueError("Operation oder Schrittfolge unbekannt")
+    if not isinstance(done, list) or done != steps[:len(done)]:
+        raise ValueError("done ist kein Praefix der Schrittfolge")
+    after = data.get("hashes_after")
+    if not isinstance(after, dict) or set(after) != set(done) or not all(_hash_map(v) for v in after.values()):
+        raise ValueError("hashes_after passt nicht zu done")
+    if not _hash_map(data.get("hashes_before")):
+        raise ValueError("hashes_before ist ungueltig")
+    if "aborted" in data and not _hash_map(data["aborted"]):
+        raise ValueError("aborted ist ungueltig")
+    pending = data.get("pending")
+    if pending is not None and not (
+            isinstance(pending, dict) and set(pending) == {"step", "file", "hash"}
+            and pending["step"] in steps and pending["file"] in (ACTIVE_NAME, DONE_NAME)
+            and isinstance(pending["hash"], str) and len(pending["hash"]) == 64):
+        raise ValueError("pending ist ungueltig")
+    if not isinstance(data.get("params"), dict) or not isinstance(data.get("entry_id"), str):
+        raise ValueError("params oder entry_id ungueltig")
 
 
 def open_journals(settings: Settings) -> list[dict]:
@@ -111,12 +156,8 @@ def open_journals(settings: Settings) -> list[dict]:
     for path in sorted(folder.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if (not isinstance(data, dict) or data.get("schema") != SCHEMA or data.get("txid") != path.stem
-                    or data.get("checksum") != _checksum(data)):
-                raise ValueError("Pruefsumme oder Schema stimmt nicht")
-            for key in ("hashes_before", "hashes_after", "steps", "done", "params", "op", "entry_id"):
-                data[key]
-        except (OSError, ValueError, KeyError) as exc:
+            _validate(data, path)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             raise _denied("journal_corrupt", f"{path.name}: {exc}") from exc
         data["_path"] = path
         found.append(data)
@@ -170,6 +211,8 @@ def _classify(settings: Settings, tx: Transaction, data: dict) -> str:
     states = [data["hashes_before"]] + [data["hashes_after"].get(step) for step in data["done"]]
     done = len(data["done"])
     local = chain_hashes(settings)
+    if data.get("aborted") == local:
+        return "abort"  # Rollback war durch, nur das Loeschen fehlte
     pending = data.get("pending")
     if pending and done < len(data["steps"]) and pending.get("step") == data["steps"][done] \
             and states[done] != local:
@@ -192,78 +235,82 @@ def _classify(settings: Settings, tx: Transaction, data: dict) -> str:
 
 
 def recover(settings: Settings, tx: Transaction) -> None:
-    """Offene Journale abschliessen oder verwerfen, bevor etwas Neues geschrieben wird."""
+    """Offene Journale abschliessen oder verwerfen, bevor etwas Neues geschrieben wird.
+
+    Die Recovery journalisiert selbst: waehrend des Roll-forward ist ``tx.journal`` das offene Journal,
+    jeder Schritt vermerkt vorab ``pending`` und danach den Fortschritt (ein Abbruch mittendrin bleibt beweisbar)."""
     from . import writer
     for data in open_journals(settings):
         name = data["_path"].name
         verdict = _classify(settings, tx, data)
+        if verdict == "delete":
+            writer._unlink(settings, data["_path"])
+            continue
+        if verdict in ("discard", "abort"):
+            tx.commit_marker(ignore=data["txid"], required=True)
+            writer._unlink(settings, data["_path"])
+            continue
+        step = {"decide": _recover_decide, "restore": _recover_restore}.get(data.get("op"))
+        if step is None:
+            raise StarUnavailable(f"Offenes Journal {name} hat eine unbekannte Operation.")
+        log = Journal(settings, data)
+        log.tx = tx
+        tx.journal = log
         try:
-            if verdict == "forward" and data.get("op") == "decide":
-                _recover_decide(settings, tx, data)
-            elif verdict == "forward" and data.get("op") == "restore":
-                _recover_restore(settings, tx, data)
-            elif verdict == "forward":
-                raise StarUnavailable(f"Offenes Journal {name} hat eine unbekannte Operation.")
+            step(settings, tx, log)
         except StarUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise StarUnavailable(f"Offenes Journal {name} ist nicht abschliessbar ({exc}) — Kette bleibt "
                                   "nur lesbar.") from exc
-        if verdict != "delete":
-            tx.commit_marker(ignore=data["txid"])  # erst den Stand melden, dann das Journal loeschen
-        writer._unlink(settings, data["_path"])
+        tx.commit_marker(ignore=data["txid"], required=True)  # erst den Stand melden, dann das Journal loeschen
+        log.close()
+    _sweep_tmp(settings, tx)
 
 
-def _recover_decide(settings: Settings, tx: Transaction, data: dict) -> None:
+def _sweep_tmp(settings: Settings, tx: Transaction) -> None:
+    """Eigene ``*.polaris-tmp`` abgeschlossener oder verworfener Transaktionen entfernen (best effort)."""
+    mine = f"@{tx.cfg.host}{TMP_SUFFIX}"
+    live = {tx.txid} | {p.stem for p in (journal_dir(settings).glob("*.json") if journal_dir(settings).is_dir()
+                                         else [])}
+    for path in Path(settings.chain_dir).rglob("*" + TMP_SUFFIX):
+        if not path.name.endswith(mine):
+            continue
+        txid = path.name[:-len(mine)].rsplit(".", 1)[-1].split("-", 1)[0]
+        if txid in live:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _recover_decide(settings: Settings, tx: Transaction, log: Journal) -> None:
     from . import writer
-    from .chain import _load_index_tool
+    data = log.data
     p, eid, orig = data["params"], data["entry_id"], data["txid"]
     path = Path(settings.chain_dir) / ACTIVE_NAME
-    tool = _load_index_tool(settings.index_script)
-    done_present = _done_block(settings, eid, orig, "")
-    line = _find_line(settings, path, eid)
-    filled = False
-    if line is not None:
-        lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
-        start, end = writer.entry_bounds(settings, lines, line)
-        for row in lines[start:end]:
-            match = writer.DECISION_FIELD_RE.match(row.rstrip("\r\n"))
-            if match:
-                filled = not tool.is_placeholder(match.group(2))
-                break
-        if not filled and ("fill" in data["done"] or "done" in data["done"]):
-            raise StarUnavailable(f"{eid}: Journal meldet Fortschritt, den diese Kopie der Kette nicht zeigt — "
-                                  "vermutlich noch nicht synchron; Kette bleibt nur lesbar.")
-        if not filled and not done_present:
-            return  # nichts geschrieben: Journal verwerfen (Zuruecksetzen = nichts zu tun)
-        if not filled:
-            raise StarUnavailable(f"{eid}: Beleg ohne ausgefuellte Entscheidung — manuelle Pruefung noetig.")
-    if "done" in data["done"] and not done_present:
-        raise StarUnavailable(f"{eid}: Journal meldet den Registerbeleg, diese Kopie zeigt ihn nicht — "
-                              "vermutlich noch nicht synchron; Kette bleibt nur lesbar.")
-    original = decode_block(p["original_block_b64"])
-    if not done_present:
-        entry = {"id": eid, "title": p["title"], "source_file": p["source_file"], "source_line": p["source_line"]}
-        writer.append_done(settings, entry, p["choice"], p["note"], on=p["on"], original_block=original,
-                           stamp=f"{tx.stamp()} recovers={orig}")
-    line = _find_line(settings, path, eid)
-    if line is not None:
-        writer.remove_entry(settings, path, line, expected_id=eid)
+    if "done" not in data["done"]:
+        if not _done_block(settings, eid, orig, ""):
+            original = decode_block(p["original_block_b64"])
+            entry = {"id": eid, "title": p["title"], "source_file": p["source_file"],
+                     "source_line": p["source_line"]}
+            writer.append_done(settings, entry, p["choice"], p["note"], on=p["on"], original_block=original,
+                               stamp=f"{tx.stamp()} recovers={orig}")
+        log.advance("done")
+    if "remove" not in data["done"]:
+        line = _find_line(settings, path, eid)
+        if line is not None:
+            writer.remove_entry(settings, path, line, expected_id=eid)
+        log.advance("remove")
 
 
-def _recover_restore(settings: Settings, tx: Transaction, data: dict) -> None:
+def _recover_restore(settings: Settings, tx: Transaction, log: Journal) -> None:
     from . import writer
+    data = log.data
     p, eid, orig = data["params"], data["entry_id"], data["txid"]
-    path = Path(settings.chain_dir) / ACTIVE_NAME
-    in_active = _find_line(settings, path, eid) is not None
-    marked = _done_block(settings, eid, orig, "ZUR")
-    if "restore" in data["done"] and not in_active:
-        raise StarUnavailable(f"{eid}: Journal meldet den Restore, diese Kopie zeigt ihn nicht — vermutlich "
-                              "noch nicht synchron; Kette bleibt nur lesbar.")
-    if not in_active and not marked:
-        return  # nichts geschrieben
-    if not in_active:
-        raise StarUnavailable(f"{eid}: Rueckgaengig-Vermerk ohne Aktiveintrag — manuelle Pruefung noetig.")
-    if not marked:
-        writer.mark_decision_undone(settings, eid, p["reason"], on=p["on"],
-                                    stamp=f"{tx.stamp()} recovers={orig}")
+    if "mark" not in data["done"]:
+        if not _done_block(settings, eid, orig, "ZUR"):
+            writer.mark_decision_undone(settings, eid, p["reason"], on=p["on"],
+                                        stamp=f"{tx.stamp()} recovers={orig}")
+        log.advance("mark")

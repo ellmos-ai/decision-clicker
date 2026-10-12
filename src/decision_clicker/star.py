@@ -154,15 +154,15 @@ def is_ecosystem_chain(settings: Settings, env: dict[str, str] | None = None) ->
 
 
 def transport_ok(url: str) -> bool:
-    """https:// immer; http:// nur fuer Loopback und Tailscale (100.64.0.0/10, ``*.ts.net``, WireGuard)."""
+    """https:// immer; http:// nur fuer IP-Literale: Loopback (v4/v6) und Tailscale 100.64.0.0/10
+    (WireGuard verschluesselt den Weg). Hostnamen nur mit https: eine Aufloesung waere nicht an die
+    Zieladresse gebunden."""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     if parts.scheme == "https":
         return bool(host)
     if parts.scheme != "http" or not host:
         return False
-    if host == "localhost" or host.endswith(".ts.net"):
-        return True
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:
@@ -205,8 +205,8 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
                 "oder Geraete-Token — Kette ist nur lesbar.")
         if not transport_ok(url):
             raise StarUnavailable(
-                "Der BACH-Lead muss per https:// erreichbar sein (http:// nur fuer Loopback und Tailscale: "
-                "100.64.0.0/10 bzw. *.ts.net) — Kette ist nur lesbar.")
+                "Der BACH-Lead muss per https:// erreichbar sein (http:// nur fuer IP-Literale: Loopback "
+                "und Tailscale 100.64.0.0/10) — Kette ist nur lesbar.")
         return StarConfig("server", resource, worker, host, url, token, margin, role=role,
                           renew_seconds=renew_seconds, stable_seconds=stable)
     key = "local:" + str(Path(settings.chain_dir).resolve())
@@ -540,11 +540,14 @@ class Transaction:
         assert self.hold is not None
         self.hold = self.provider.renew(self.hold, version, inflight)
 
-    def commit_marker(self, ignore: str | None = None) -> bool:
+    def commit_marker(self, ignore: str | None = None, required: bool = False) -> bool:
         """Manifest-Hash per renew melden (loescht den In-flight-Marker). Liegt ein anderes Journal als
-        ``ignore`` offen, wird NICHT gemeldet: der In-flight-Marker bleibt, die Recovery gehoert dem Journal."""
+        ``ignore`` offen, wird NICHT gemeldet: der In-flight-Marker bleibt, die Recovery gehoert dem Journal.
+        ``required``: statt ``False`` ein ``StarUnavailable`` (der Aufrufer behaelt sein Journal)."""
         folder = Path(self.settings.chain_dir) / JOURNAL_DIR
         if any(p.stem != ignore for p in (folder.glob("*.json") if folder.is_dir() else [])):
+            if required:
+                raise _denied("journal_open", "Commit-Marker nicht meldbar, fremdes Journal offen")
             return False
         self.report(chain_manifest(self.settings))
         return True
@@ -622,13 +625,13 @@ class Service:
                         self.recover(tx)
                     finally:
                         registry.pop(key, None)
-        except StarUnavailable as exc:
-            self.last_error = str(exc)
-            held, self.hold = self.hold, None  # fail-closed: ohne gelungene Recovery kein gehaltener star
+        except Exception as exc:  # noqa: BLE001  jede Ausnahme: fail-closed, der Heartbeat versucht es erneut
+            self.last_error = str(exc) or type(exc).__name__
+            held, self.hold = self.hold, None  # ohne gelungene Recovery kein gehaltener star
             if held is not None and not isinstance(exc, StarLost):
                 try:
                     self.provider.release(held)  # ohne Version: ein offener In-flight-Marker bleibt
-                except StarUnavailable:
+                except Exception:  # noqa: BLE001
                     pass
 
     def _loop(self) -> None:

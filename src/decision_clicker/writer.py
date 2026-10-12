@@ -18,7 +18,7 @@ import re
 import shutil
 import stat
 import threading
-import uuid
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -120,6 +120,22 @@ def _guard(settings: Settings, path: Path) -> None:
     tx.assert_valid()
 
 
+#: Wiederholungen bei OneDrive-Sharing-Verletzungen (PermissionError/OSError), zusammen unter 3 s.
+_RETRY_PAUSES = (0.05, 0.1, 0.2, 0.4, 0.8)
+
+
+def _retry(action):
+    for pause in (*_RETRY_PAUSES, None):
+        try:
+            return action()
+        except FileNotFoundError:
+            raise
+        except OSError:
+            if pause is None:
+                raise
+            time.sleep(pause)
+
+
 def _write(settings: Settings, path: Path, text: str, has_bom: bool) -> None:
     """Atomar: tmp im selben Ordner, dann ``os.replace`` (tmp-Namen zaehlen nicht zum Manifest)."""
     _guard(settings, path)
@@ -132,15 +148,20 @@ def _write(settings: Settings, path: Path, text: str, has_bom: bool) -> None:
         if tx is not None and tx.journal is not None and _lexical(path) == _lexical(
                 Path(settings.chain_dir) / path.name):
             tx.journal.intend(path.name, hashlib.sha256(data).hexdigest())  # Hash VOR dem Schreiben vermerken
-    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}{star.TMP_SUFFIX}")
+    tx = star.active_transaction(settings)
+    tag = f"{tx.txid}-{os.urandom(4).hex()}@{tx.cfg.host}" if tx is not None else f"none-{os.urandom(4).hex()}@-"
+    tmp = path.with_name(f"{path.name}.{tag}{star.TMP_SUFFIX}")
     try:
         with tmp.open("wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        _retry(lambda: os.replace(tmp, path))
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        try:
+            _retry(lambda: tmp.unlink(missing_ok=True))
+        except OSError:
+            pass  # bleibt liegen; der naechste Erwerb raeumt eigene tmp-Dateien abgeschlossener Transaktionen auf
         raise
 
 
@@ -749,6 +770,7 @@ def decide_entry(
             revert_decision(
                 settings, path, entry["source_line"], expected_id=entry["id"],
                 make_backup=False)
+            log.mark_aborted()
             raise
         log.advance("done")
         try:
@@ -764,14 +786,15 @@ def decide_entry(
             mark_decision_undone(
                 settings, entry["id"], "Transaktion abgebrochen", on=day,
                 make_backup=False)
+            log.mark_aborted()
             raise
         log.advance("remove")
     except StarUnavailable:
         raise  # Journal bleibt liegen, kein Revert
     except Exception:
-        log.close()  # sauber zurueckgerollt: nichts offen
+        log.close_if_proven()  # nur wenn die Kette nachweislich vorher/zurueckgerollt ist, sonst bleibt es
         raise
-    tx.commit_marker(ignore=log.data["txid"])  # R29-1: erst melden; scheitert das, bleibt das Journal liegen
+    tx.commit_marker(ignore=log.data["txid"], required=True)  # R29-1: erst melden; sonst bleibt das Journal
     log.close()
     return {
         "ok": True, "id": entry["id"], "value": filled["value"],
@@ -865,14 +888,15 @@ def restore_decision(
             remove_entry(
                 settings, target, active["source_line"], expected_id=entry_id,
                 make_backup=False)
+            log.mark_aborted()
             raise
         log.advance("mark")
     except StarUnavailable:
         raise  # Journal bleibt liegen, kein Revert
     except Exception:
-        log.close()
+        log.close_if_proven()
         raise
-    tx.commit_marker(ignore=log.data["txid"])
+    tx.commit_marker(ignore=log.data["txid"], required=True)
     log.close()
     restored["backup"] = str(active_backup) if active_backup else None
     marker["backup"] = str(done_backup) if done_backup else None

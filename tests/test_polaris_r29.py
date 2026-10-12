@@ -73,6 +73,19 @@ def journals(kette: Settings) -> list:
     return sorted(folder.glob("*.json")) if folder.is_dir() else []
 
 
+def plant_journal(kette: Settings, txid: str = "deadbeef", **changes) -> dict:
+    """Gueltiges, signiertes Journal (Kette == vorher) in den Journalordner legen."""
+    folder = kette.chain_dir / star.JOURNAL_DIR
+    folder.mkdir(exist_ok=True)
+    data = {"schema": journal.SCHEMA, "txid": txid, "op": "decide", "entry_id": "D-20260101-001",
+            "hashes_before": journal.chain_hashes(kette), "hashes_after": {}, "steps": ["fill", "done", "remove"],
+            "done": [], "params": {}}
+    data.update(changes)
+    data["checksum"] = journal._checksum(data)
+    (folder / f"{txid}.json").write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
 def next_op(kette: Settings) -> None:
     with writer.chain_transaction(kette):
         pass
@@ -109,11 +122,11 @@ def test_failed_commit_marker_keeps_the_journal_and_the_next_holder_finishes(ket
     key = first_open(kette)["key"]
     real = star.Transaction.commit_marker
 
-    def failing(self, ignore=None):
+    def failing(self, ignore=None, required=False):
         if ignore is not None:
             expire_local_claims()
             raise StarLost("injiziert")
-        return real(self, ignore)
+        return real(self, ignore, required)
 
     with monkeypatch.context() as patch:
         patch.setattr(star.Transaction, "commit_marker", failing)
@@ -305,12 +318,7 @@ def test_rebaseline_is_refused_while_the_chain_still_changes(kette, server_lead,
 def test_no_rebaseline_with_an_open_journal(kette, server_lead):  # noqa: F811
     dc = DecisionClicker(kette.chain_dir)
     dc.decide(first_open(kette)["key"], "A")
-    folder = kette.chain_dir / star.JOURNAL_DIR
-    folder.mkdir(exist_ok=True)
-    data = {"schema": journal.SCHEMA, "txid": "deadbeef", "op": "decide", "entry_id": "D-20260101-001",
-            "hashes_before": {}, "hashes_after": {}, "steps": ["fill"], "done": [], "params": {}}
-    data["checksum"] = journal._checksum(data)
-    (folder / "deadbeef.json").write_text(json.dumps(data), encoding="utf-8")
+    plant_journal(kette)
     hand_edit(kette)
     with pytest.raises(StarUnavailable) as err:
         dc.create("y", frage="f", optionen=["A — a"])
@@ -322,9 +330,10 @@ def test_no_rebaseline_with_an_open_journal(kette, server_lead):  # noqa: F811
 # R29-6: Transport
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("url,ok", [
-    ("https://lead.example.org", True), ("http://127.0.0.1:8000", True), ("http://localhost:8000", True),
+    ("https://lead.example.org", True), ("http://127.0.0.1:8000", True), ("http://localhost:8000", False),
     ("http://[::1]:8000", True), ("http://100.119.69.90:8000", True), ("http://100.64.0.1", True),
-    ("http://100.127.255.254", True), ("http://mac-studio.tail1234.ts.net:8000", True),
+    ("http://100.127.255.254", True), ("http://mac-studio.tail1234.ts.net:8000", False),
+    ("https://mac-studio.tail1234.ts.net:8000", True),
     ("http://100.63.255.255", False), ("http://100.128.0.1", False), ("http://192.168.1.5:8000", False),
     ("http://lead.example.org", False), ("http://ts.net.evil.org", False), ("ftp://127.0.0.1", False),
     ("127.0.0.1:8000", False), ("http://", False)])

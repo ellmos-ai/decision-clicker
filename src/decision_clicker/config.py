@@ -84,7 +84,9 @@ class Settings:
     backup_root: Path | None = None
 
     def __post_init__(self) -> None:
-        """R29-7: Sicherungen duerfen nicht im Kettenordner liegen (sie waeren Kettenmutationen)."""
+        """Kettenordner EINMAL aufloesen (uebergeordnete Links, z. B. ~/OneDrive -> CloudStorage, sind
+        erlaubt); danach gilt der aufgeloeste Pfad. R29-7: Sicherungen duerfen nicht im Kettenordner liegen."""
+        object.__setattr__(self, "chain_dir", Path(os.path.realpath(self.chain_dir)))
         if self.backup_root is not None:
             def norm(value: Path) -> Path:
                 return Path(os.path.normcase(os.path.realpath(value)))

@@ -24,10 +24,17 @@ gibt es nicht. ServerStar: `DECISION_CLICKER_LEAD_URL` (oder `BACH_LEAD_URL`),
 Kettenordner:** ein `backup_root` (`DECISION_CLICKER_BACKUP_ROOT`) im Kettenordner wird beim Laden der
 Konfiguration abgelehnt.
 
-**Transport:** `https://` ist Pflicht. `http://` gilt nur für Loopback (`127.0.0.0/8`, `::1`, `localhost`) und
-Tailscale (`100.64.0.0/10`, Hostnamen `*.ts.net`; WireGuard verschlüsselt den Weg). Jeder andere Lead mit
-`http://` wird fail-closed abgelehnt (Kette nur lesbar). Das Geräte-Token erscheint nie in Logs,
-Fehlertexten oder Reprs.
+**Transport:** `https://` ist Pflicht. `http://` gilt nur für **IP-Literale**: Loopback (`127.0.0.0/8`, `::1`) und
+Tailscale (`100.64.0.0/10`; WireGuard verschlüsselt den Weg). Hostnamen (auch `localhost`, `*.ts.net`) nur mit
+`https://`, weil eine Namensauflösung nicht an die Zieladresse gebunden ist und das Bearer-Token sonst im
+Klartext woandershin ginge. Alles andere wird fail-closed abgelehnt (Kette nur lesbar). Das Geräte-Token
+erscheint nie in Logs, Fehlertexten oder Reprs.
+
+**Pfadwurzel:** `chain_dir` wird beim Laden der Konfiguration **einmal** aufgelöst (`realpath`) und danach fest
+verwendet. Übergeordnete Komponenten dürfen Links sein (auf dem Mac ist `~/OneDrive` ein Link nach
+`~/Library/CloudStorage/...`; eine Sperre bräche den Betrieb dort). **Innerhalb** der Kette sind Symlinks und
+Junctions verboten: der Choke-Point lehnt jeden Pfad ab, dessen Komponenten unterhalb von `chain_dir` ein Link
+sind (`WriteError`, auch mit gültigem Stern).
 
 ## Ablauf einer Transaktion
 
@@ -36,7 +43,11 @@ Fehlertexten oder Reprs.
 2. Offenes Journal des Vorgängers abschließen oder warten (Abschnitt Recovery).
 3. Vor **jeder** Kettenschreibung prüft der Choke-Point (`writer._guard`) den Stern: lokale Frist ab
    Sendezeit und Monoton-Uhr, bei Zeitlücke online. Kettendateien werden atomar geschrieben (tmp im selben
-   Ordner, `fsync`, `os.replace`; `*.polaris-tmp` zählt nicht zum Manifest und wird bei Fehlern entfernt).
+   Ordner, `fsync`, `os.replace`; `*.polaris-tmp` zählt nicht zum Manifest). `os.replace` und das Löschen der
+   tmp-Datei werden bei `PermissionError`/`OSError` (OneDrive-Sharing-Verletzung) bis zu 5-mal mit wachsender
+   Pause wiederholt (zusammen unter 3 s), danach fail-closed: das Ziel bleibt unverändert, ein Reststück bleibt
+   liegen und wird beim nächsten Erwerb entfernt, aber nur eigene tmp-Dateien (Host-Kennung im Namen)
+   abgeschlossener oder verworfener Transaktionen.
    Pfade im Kettenumfang mit Symlink oder Junction in irgendeiner Komponente lehnt der Choke-Point ab
    (`WriteError`), auch mit gültigem Stern.
 4. Mehrdatei-Transaktionen (`decide_entry`, `restore_decision`/`undo_decision`): **Journal → In-flight-Marker →
@@ -44,8 +55,11 @@ Fehlertexten oder Reprs.
    Prüfsumme) trägt Plan, die Datei-Hashes vor der Transaktion, nach jedem Schritt und vorab den Hash des
    nächsten Schreibens (`pending`). Bei Sternverlust: stoppen, **kein Auto-Revert**, Journal bleibt liegen.
 5. Der Commit-Marker (renew mit dem Manifest-Hash, löscht den In-flight-Marker) kommt **vor** dem Löschen des
-   Journals. Scheitert er, bleibt das Journal liegen und der Nachfolger schließt ab. Liegt ein fremdes
-   Journal offen, meldet eine Transaktion beim Verlassen keinen Manifest-Hash (der In-flight-Marker bleibt).
+   Journals und ist Pflicht: scheitert er oder liegt ein fremdes Journal offen (`journal_open`), bleibt das
+   eigene Journal liegen und die Transaktion gilt als nicht abgeschlossen (decide, restore, undo, Recovery).
+   Beim bloßen Verlassen meldet eine Transaktion bei fremdem Journal keinen Manifest-Hash.
+6. Fehlerpfade löschen das Journal nur mit Beweis: die Kette muss dem Zustand „vorher“ oder dem nach dem
+   Rollback vermerkten Zustand (`aborted`) entsprechen, sonst bleibt es für die Recovery liegen.
 
 ## Recovery: nur mit Beweis, sonst warten
 
@@ -58,6 +72,11 @@ Fehlertexten oder Reprs.
 | Kette == „vorher“ (nichts geschrieben) | Journal verwerfen |
 | Journal ohne In-flight-Marker (Commit gelungen, Löschen nicht): Kette == Ziel | Journal löschen |
 | Journal ohne In-flight-Marker, unvollständig | `journal_unmatched`, warten |
+
+Die Recovery journalisiert selbst: beim Roll-forward ist das Journal das der Transaktion, jeder Schritt vermerkt
+vorab `pending` und danach den Fortschritt; ein Abbruch mitten im Roll-forward bleibt so beweisbar und eine
+zweite Recovery schließt ab. Beim Laden werden Typen und Schrittfolge geprüft (`journal_corrupt` bei jeder
+Abweichung).
 
 Ein Schreiben, dessen Fortschrittsvermerk fehlt (Abbruch zwischen Schreiben und Vermerk), wird über den
 vorab vermerkten Hash (`pending`) bewiesen. Restrisiko: eine zusätzliche, nicht journalisierte Schreibung
