@@ -216,7 +216,7 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
 
 def describe(settings: Settings) -> dict[str, Any]:
     """Zustand fuer Status/UI (ohne Netzzugriff): Dienst-Stern oder Konfiguration."""
-    service = _services.get(str(Path(settings.chain_dir)))
+    service = _services.get(chain_key(settings))
     if service is not None:
         return service.status()
     try:
@@ -284,6 +284,11 @@ def _denied(reason: str, detail: str = "", inflight: bool = False) -> StarUnavai
     error.reason = reason  # type: ignore[attr-defined]
     error.inflight = inflight  # type: ignore[attr-defined]
     return error
+
+
+def worker_tag(cfg: StarConfig) -> str:
+    """Kennung des Schreibers (Worker-ID ``agent@host``) fuer tmp-Dateinamen."""
+    return re.sub(r"[^A-Za-z0-9@._-]", "-", cfg.worker_id)
 
 
 def inflight_version(txid: str) -> str:
@@ -530,15 +535,20 @@ class Transaction:
         hold = self.hold
         if hold is None or not hold.valid(margin):
             raise StarLost("Polaris star abgelaufen oder verloren — sofort stoppen, kein Auto-Revert.")
-        if hold.needs_online_check(margin=margin):
-            self.hold = self.provider.renew(hold)  # Zeitluecke: online neu pruefen (StarLost bei Verlust)
-        elif hold.remaining() < hold.ttl / 2:
-            self.hold = self.provider.renew(hold)
+        if hold.needs_online_check(margin=margin) or hold.remaining() < hold.ttl / 2:
+            self._renew()  # Zeitluecke bzw. halbe Frist: online erneuern (StarLost bei Verlust)
+
+    def _renew(self, version: str | None = None, inflight: bool = False) -> None:
+        if self.service is not None:
+            self.service.renew_hold(version, inflight)
+        else:
+            assert self._hold is not None
+            self._hold = self.provider.renew(self._hold, version, inflight)
 
     def report(self, version: str, inflight: bool = False) -> None:
         """Version beim Lead melden (renew) -- Commit-Marker oder In-flight-Marker."""
         assert self.hold is not None
-        self.hold = self.provider.renew(self.hold, version, inflight)
+        self._renew(version, inflight)
 
     def commit_marker(self, ignore: str | None = None, required: bool = False) -> bool:
         """Manifest-Hash per renew melden (loescht den In-flight-Marker). Liegt ein anderes Journal als
@@ -553,7 +563,8 @@ class Transaction:
         return True
 
 
-def _acquire(settings: Settings, provider: ServerStar | LocalStar, cfg: StarConfig) -> tuple[Hold, str]:
+def _acquire(settings: Settings, provider: ServerStar | LocalStar, cfg: StarConfig,
+             ignore_journals: bool = False) -> tuple[Hold, str]:
     """Erwerb mit Sync-Schranke. Liefert den star und den Weg (``Transaction.via``).
 
     1. lokaler Manifest-Hash; 2. nach Sternverlust in einer journalisierten Transaktion: In-flight-Marker
@@ -579,7 +590,7 @@ def _acquire(settings: Settings, provider: ServerStar | LocalStar, cfg: StarConf
         raise _denied("journal_not_synced")
     if cfg.role != "server":
         raise stale
-    if journals:
+    if journals and not ignore_journals:  # ignore_journals: nur der Operatorpfad ``polaris journal resolve``
         raise _denied("journal_open")
     stable = stable_manifest(settings, cfg.stable_seconds)
     return provider.acquire(stable, rebaseline=True), "rebaseline"
@@ -602,6 +613,7 @@ class Service:
         self.hold: Hold | None = None
         self.last_error: str | None = None
         self.lost_count = 0
+        self._hold_lock = threading.Lock()  # nur fuer self.hold (kein MUTATION_LOCK: keine neue Sperrreihenfolge)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -619,7 +631,7 @@ class Service:
                     tx = Transaction(self.settings, self.cfg, self.provider, service=self)
                     tx.via = via
                     registry = _tls.__dict__.setdefault("active", {})
-                    key = str(Path(self.settings.chain_dir))
+                    key = chain_key(self.settings)
                     registry[key] = tx
                     try:
                         self.recover(tx)
@@ -634,21 +646,30 @@ class Service:
                 except Exception:  # noqa: BLE001
                     pass
 
+    def renew_hold(self, version: str | None = None, inflight: bool = False) -> Hold:
+        """Lesen-Erneuern-Schreiben von ``self.hold`` als eine Einheit (Heartbeat und Transaktionen)."""
+        with self._hold_lock:
+            hold = self.hold
+            if hold is None:
+                raise StarLost("Polaris star verloren — sofort stoppen, kein Auto-Revert.")
+            self.hold = self.provider.renew(hold, version, inflight)
+            return self.hold
+
     def _loop(self) -> None:
         while not self._stop.wait(self.cfg.renew_seconds):
-            hold = self.hold
-            if hold is not None:
+            if self.hold is not None:
                 try:
-                    self.hold = self.provider.renew(hold)
+                    self.renew_hold()
                 except StarUnavailable as exc:
                     self.mark_lost(f"Polaris star verloren ({exc})")
             if self.hold is None:
                 self._try_acquire()
 
     def mark_lost(self, reason: str) -> None:
-        self.hold = None
-        self.last_error = reason
-        self.lost_count += 1
+        with self._hold_lock:
+            self.hold = None
+            self.last_error = reason
+            self.lost_count += 1
 
     def stop(self) -> None:
         self._stop.set()
@@ -683,13 +704,19 @@ _services: dict[str, Service] = {}
 _tls = threading.local()
 
 
+def chain_key(settings: Settings) -> str:
+    """Schluessel der Dienst- und Transaktions-Registry: aufgeloest und schreibweisen-normalisiert
+    (Windows: ``C:\\Kette`` und ``c:\\kette`` sind dieselbe Kette)."""
+    return os.path.normcase(os.path.realpath(settings.chain_dir))
+
+
 def start_service(settings: Settings, *, recover: Callable[[Transaction], None] | None = None,
                   mutation_lock=None) -> Service | None:
     """Dienst-Stern starten (nur ServerStar). Gibt None zurueck, wenn die Kette im Einzelbetrieb laeuft."""
     cfg = resolve(settings)
     if cfg.kind != "server":
         return None
-    key = str(Path(settings.chain_dir))
+    key = chain_key(settings)
     service = Service(settings, cfg, make_provider(cfg), recover, mutation_lock or threading.RLock())
     _services[key] = service
     service.start()
@@ -697,17 +724,18 @@ def start_service(settings: Settings, *, recover: Callable[[Transaction], None] 
 
 
 def stop_service(settings: Settings) -> None:
-    service = _services.pop(str(Path(settings.chain_dir)), None)
+    service = _services.pop(chain_key(settings), None)
     if service is not None:
         service.stop()
 
 
 def active_transaction(settings: Settings) -> Transaction | None:
-    return getattr(_tls, "active", {}).get(str(Path(settings.chain_dir)))
+    return getattr(_tls, "active", {}).get(chain_key(settings))
 
 
 @contextmanager
-def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None] | None = None):
+def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None] | None = None,
+                ignore_journals: bool = False):
     """Block unter dem Polaris star ausfuehren.
 
     Mit laufendem Dienst: dessen gehaltener star wird genutzt, nichts erworben oder zurueckgegeben.
@@ -718,7 +746,7 @@ def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None
     if existing is not None:
         yield existing
         return
-    key = str(Path(settings.chain_dir))
+    key = chain_key(settings)
     registry = _tls.__dict__.setdefault("active", {})
     service = _services.get(key)
     if service is not None:
@@ -740,7 +768,7 @@ def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None
     cfg = resolve(settings)
     provider = make_provider(cfg)
     tx = Transaction(settings, cfg, provider)
-    tx.hold, tx.via = _acquire(settings, provider, cfg)
+    tx.hold, tx.via = _acquire(settings, provider, cfg, ignore_journals)
     registry[key] = tx
     try:
         if on_acquired is not None:

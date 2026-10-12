@@ -20,13 +20,17 @@ atomar geschrieben und traegt eine Pruefsumme (``journal_corrupt`` -> nur lesbar
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
+import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
+from . import star
 from .config import Settings
-from .errors import StarUnavailable
+from .errors import StarUnavailable, WriteError
 from .star import JOURNAL_DIR, TMP_SUFFIX, Transaction, _denied, inflight_version
 
 SCHEMA = "decision-clicker.journal.v1"
@@ -116,9 +120,12 @@ class Journal:
         writer._unlink(self.settings, self.path)
 
 
+HEX64_RE = re.compile(r"[0-9a-f]{64}")
+
+
 def _hash_map(value) -> bool:
     return (isinstance(value, dict) and set(value) == {ACTIVE_NAME, DONE_NAME}
-            and all(v is None or (isinstance(v, str) and len(v) == 64) for v in value.values()))
+            and all(v is None or (isinstance(v, str) and HEX64_RE.fullmatch(v)) for v in value.values()))
 
 
 def _validate(data: dict, path: Path) -> None:
@@ -136,14 +143,18 @@ def _validate(data: dict, path: Path) -> None:
         raise ValueError("hashes_after passt nicht zu done")
     if not _hash_map(data.get("hashes_before")):
         raise ValueError("hashes_before ist ungueltig")
-    if "aborted" in data and not _hash_map(data["aborted"]):
-        raise ValueError("aborted ist ungueltig")
+    if "aborted" in data:
+        # zulaessiger Rollbackzustand: die Aktivdatei ist wieder VORHER; das Register ist append-only und
+        # darf Rollback-Vermerke tragen
+        if not _hash_map(data["aborted"]) or data["aborted"][ACTIVE_NAME] != data["hashes_before"][ACTIVE_NAME]:
+            raise ValueError("aborted ist kein zulaessiger Rollbackzustand")
     pending = data.get("pending")
-    if pending is not None and not (
-            isinstance(pending, dict) and set(pending) == {"step", "file", "hash"}
-            and pending["step"] in steps and pending["file"] in (ACTIVE_NAME, DONE_NAME)
-            and isinstance(pending["hash"], str) and len(pending["hash"]) == 64):
-        raise ValueError("pending ist ungueltig")
+    if pending is not None:
+        nxt = steps[len(done)] if len(done) < len(steps) else None
+        if not (isinstance(pending, dict) and set(pending) == {"step", "file", "hash"}
+                and nxt is not None and pending["step"] == nxt and pending["file"] == STEP_FILE[op][nxt]
+                and isinstance(pending["hash"], str) and HEX64_RE.fullmatch(pending["hash"])):
+            raise ValueError("pending passt nicht zum naechsten offenen Schritt und dessen Datei")
     if not isinstance(data.get("params"), dict) or not isinstance(data.get("entry_id"), str):
         raise ValueError("params oder entry_id ungueltig")
 
@@ -269,10 +280,12 @@ def recover(settings: Settings, tx: Transaction) -> None:
 
 
 def _sweep_tmp(settings: Settings, tx: Transaction) -> None:
-    """Eigene ``*.polaris-tmp`` abgeschlossener oder verworfener Transaktionen entfernen (best effort)."""
-    mine = f"@{tx.cfg.host}{TMP_SUFFIX}"
-    live = {tx.txid} | {p.stem for p in (journal_dir(settings).glob("*.json") if journal_dir(settings).is_dir()
-                                         else [])}
+    """Eigene ``*.polaris-tmp`` (Worker-ID im Namen) abgeschlossener oder verworfener Transaktionen entfernen;
+    nur nach dem Link-Guard (keine Links innerhalb der Kette), best effort."""
+    from . import writer
+    mine = f"@{star.worker_tag(tx.cfg)}{TMP_SUFFIX}"
+    folder = journal_dir(settings)
+    live = {tx.txid} | {p.stem for p in (folder.glob("*.json") if folder.is_dir() else [])}
     for path in Path(settings.chain_dir).rglob("*" + TMP_SUFFIX):
         if not path.name.endswith(mine):
             continue
@@ -280,8 +293,10 @@ def _sweep_tmp(settings: Settings, tx: Transaction) -> None:
         if txid in live:
             continue
         try:
-            path.unlink()
-        except OSError:
+            writer._reject_links(settings, path)
+            if not path.is_symlink():
+                path.unlink()
+        except (OSError, WriteError):
             pass
 
 
@@ -314,3 +329,110 @@ def _recover_restore(settings: Settings, tx: Transaction, log: Journal) -> None:
             writer.mark_decision_undone(settings, eid, p["reason"], on=p["on"],
                                         stamp=f"{tx.stamp()} recovers={orig}")
         log.advance("mark")
+
+
+# ---------------------------------------------------------------------------
+# Operatorpfad gegen den Dauerblock: polaris journal list | show | resolve
+# ---------------------------------------------------------------------------
+def describe(settings: Settings) -> list[dict]:
+    """Alle Journale im Ordner, auch beschaedigte (list braucht keinen Stern)."""
+    rows = []
+    folder = journal_dir(settings)
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        row: dict = {"tx": path.stem}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            _validate(data, path)
+            row.update(valid=True, op=data["op"], entry_id=data["entry_id"], done=data["done"],
+                       steps=data["steps"], started=data.get("started"), host=data.get("host"))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            row.update(valid=False, error=str(exc))
+        rows.append(row)
+    return rows
+
+
+def show(settings: Settings, txid: str) -> dict:
+    path = journal_dir(settings) / f"{txid}.json"
+    if not path.is_file():
+        raise WriteError(f"Kein Journal {txid}.")
+    row = next(r for r in describe(settings) if r["tx"] == txid)
+    row["local_hashes"] = chain_hashes(settings)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        row["hashes_before"] = data.get("hashes_before")
+        row["hashes_after"] = data.get("hashes_after")
+        row["pending"] = data.get("pending")
+        row["aborted"] = data.get("aborted")
+        row["entry_id"] = data.get("entry_id")
+    except (OSError, ValueError):
+        pass
+    return row
+
+
+def _find_backup(backup_dir: Path, digest: str, skip: Path) -> Path | None:
+    candidates = [p for p in backup_dir.rglob("*") if p.is_file() and skip not in p.parents]
+    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        if sha256_of(path) == digest:
+            return path
+    return None
+
+
+def resolve(settings: Settings, txid: str, decision: str, operator: str | None = None) -> dict:
+    """Ein blockierendes Journal gesichert aufloesen. Braucht den Stern.
+
+    ``keep-current``: die Kette bleibt, wie sie ist (der Operator hat sie geprueft). ``restore-before``: die
+    Kettendateien kommen aus Sicherungen zurueck, deren Hash dem Vorher-Zustand des Journals entspricht.
+    Vorher werden Kettendateien und Journal nach ``backup_dir/polaris-resolve-<tx>-<zeit>`` gesichert, danach
+    meldet der Commit-Marker das neue Manifest; eine Logzeile haelt Operator, tx und Entscheidung fest."""
+    from . import writer
+    if decision not in ("keep-current", "restore-before"):
+        raise WriteError("Entscheidung: keep-current oder restore-before.")
+    path = journal_dir(settings) / f"{txid}.json"
+    if not path.is_file():
+        raise WriteError(f"Kein Journal {txid}.")
+    operator = operator or getpass.getuser()
+    with writer.MUTATION_LOCK:
+        with star.transaction(settings, ignore_journals=True) as tx:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            safe = Path(settings.backup_dir) / f"polaris-resolve-{txid}-{stamp}"
+            safe.mkdir(parents=True, exist_ok=True)
+            for source in (Path(settings.chain_dir) / ACTIVE_NAME, settings.done_file, path):
+                if source.is_file():
+                    shutil.copy2(source, safe / source.name)
+            restored = []
+            if decision == "restore-before":
+                try:
+                    before = json.loads(path.read_text(encoding="utf-8"))["hashes_before"]
+                    if not _hash_map(before):
+                        raise ValueError("hashes_before")
+                except (OSError, ValueError, KeyError, TypeError):
+                    raise WriteError("Das Journal ist beschaedigt: nur keep-current ist moeglich.") from None
+                plan = {}
+                for name, digest in before.items():
+                    target = Path(settings.chain_dir) / name
+                    if sha256_of(target) == digest:
+                        continue
+                    if digest is None:
+                        plan[target] = None
+                        continue
+                    source = _find_backup(Path(settings.backup_dir), digest, safe)
+                    if source is None:
+                        raise WriteError(f"Keine Sicherung mit dem Vorher-Hash von {name} gefunden — "
+                                         "restore-before nicht moeglich, keep-current waehlen oder manuell klaeren.")
+                    plan[target] = source
+                for target, source in plan.items():  # erst pruefen (oben), dann schreiben
+                    if source is None:
+                        writer._unlink(settings, target)
+                    else:
+                        raw = source.read_bytes()
+                        bom = raw.startswith(b"\xef\xbb\xbf")
+                        writer._write(settings, target, raw.decode("utf-8-sig"), bom)
+                    restored.append(target.name)
+            tx.commit_marker(ignore=txid, required=True)
+            writer._unlink(settings, path)
+            line = {"at": datetime.now().isoformat(timespec="seconds"), "operator": operator, "tx": txid,
+                    "decision": decision, "restored": restored, "backup": str(safe),
+                    "worker": tx.cfg.worker_id}
+            with (Path(settings.backup_dir) / "polaris-resolve.log").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return line

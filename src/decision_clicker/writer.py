@@ -149,7 +149,8 @@ def _write(settings: Settings, path: Path, text: str, has_bom: bool) -> None:
                 Path(settings.chain_dir) / path.name):
             tx.journal.intend(path.name, hashlib.sha256(data).hexdigest())  # Hash VOR dem Schreiben vermerken
     tx = star.active_transaction(settings)
-    tag = f"{tx.txid}-{os.urandom(4).hex()}@{tx.cfg.host}" if tx is not None else f"none-{os.urandom(4).hex()}@-"
+    tag = (f"{tx.txid}-{os.urandom(4).hex()}@{star.worker_tag(tx.cfg)}" if tx is not None
+           else f"none-{os.urandom(4).hex()}@-")
     tmp = path.with_name(f"{path.name}.{tag}{star.TMP_SUFFIX}")
     try:
         with tmp.open("wb") as handle:

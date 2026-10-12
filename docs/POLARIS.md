@@ -34,7 +34,8 @@ erscheint nie in Logs, Fehlertexten oder Reprs.
 verwendet. Übergeordnete Komponenten dürfen Links sein (auf dem Mac ist `~/OneDrive` ein Link nach
 `~/Library/CloudStorage/...`; eine Sperre bräche den Betrieb dort). **Innerhalb** der Kette sind Symlinks und
 Junctions verboten: der Choke-Point lehnt jeden Pfad ab, dessen Komponenten unterhalb von `chain_dir` ein Link
-sind (`WriteError`, auch mit gültigem Stern).
+sind (`WriteError`, auch mit gültigem Stern). Die Registry der Dienste und Transaktionen schlüsselt auf
+`normcase(realpath(chain_dir))`, damit unter Windows abweichende Schreibweisen dieselbe Kette meinen.
 
 ## Ablauf einer Transaktion
 
@@ -46,8 +47,8 @@ sind (`WriteError`, auch mit gültigem Stern).
    Ordner, `fsync`, `os.replace`; `*.polaris-tmp` zählt nicht zum Manifest). `os.replace` und das Löschen der
    tmp-Datei werden bei `PermissionError`/`OSError` (OneDrive-Sharing-Verletzung) bis zu 5-mal mit wachsender
    Pause wiederholt (zusammen unter 3 s), danach fail-closed: das Ziel bleibt unverändert, ein Reststück bleibt
-   liegen und wird beim nächsten Erwerb entfernt, aber nur eigene tmp-Dateien (Host-Kennung im Namen)
-   abgeschlossener oder verworfener Transaktionen.
+   liegen und wird beim nächsten Erwerb entfernt, aber nur eigene tmp-Dateien (Worker-ID `agent@host` im Namen)
+   abgeschlossener oder verworfener Transaktionen und nur nach dem Link-Guard.
    Pfade im Kettenumfang mit Symlink oder Junction in irgendeiner Komponente lehnt der Choke-Point ab
    (`WriteError`), auch mit gültigem Stern.
 4. Mehrdatei-Transaktionen (`decide_entry`, `restore_decision`/`undo_decision`): **Journal → In-flight-Marker →
@@ -82,6 +83,26 @@ Ein Schreiben, dessen Fortschrittsvermerk fehlt (Abbruch zwischen Schreiben und 
 vorab vermerkten Hash (`pending`) bewiesen. Restrisiko: eine zusätzliche, nicht journalisierte Schreibung
 (Revert-Pfad nach einem Fehler) lässt die Kette „unmatched“; das braucht dann Handarbeit.
 
+## Operatorpfad: ein Journal blockiert dauerhaft
+
+Wann: die Kette bleibt nur lesbar und meldet `journal_unmatched` oder `journal_corrupt`, und das Warten hilft
+nicht (der Sync ist längst durch, oder die Kette wurde von Hand verändert). Zuerst warten und den Sync
+abwarten; erst wenn der Zustand bleibt:
+
+1. `decision-clicker polaris journal list` zeigt die offenen Journale (auch beschädigte), ohne Stern.
+2. `decision-clicker polaris journal show <tx>` zeigt Schritte, Fortschritt, die Hashes des Journals und die
+   lokalen Hashes der Kettendateien, ohne Stern. Der Operator prüft, welcher Stand der richtige ist.
+3. `decision-clicker polaris journal resolve <tx> --keep-current` lässt die Kette, wie sie ist (der Operator
+   hat sie geprüft). `--restore-before` holt `TO-DECIDE-USER.txt` und `DECIDED-AND-DONE.md` aus den Sicherungen
+   zurück, deren Hash dem Vorher-Zustand des Journals entspricht (`backup_dir`, die Sicherungen legt jede
+   Transaktion vorher an); fehlt eine, passiert nichts. Bei einem beschädigten Journal geht nur `--keep-current`.
+
+`resolve` braucht den Stern (ohne ihn bleibt alles unberührt) und läuft nur auf der Server-Rolle, wenn die
+Kette vom gemeldeten Stand abweicht. Es sichert vorher beide Kettendateien und das Journal nach
+`backup_dir/polaris-resolve-<tx>-<zeit>/`, meldet danach den Commit-Marker mit dem neuen Manifest, löscht das
+Journal und hängt eine Zeile (Zeit, Operator, tx, Entscheidung, Sicherungsordner, Worker) an
+`backup_dir/polaris-resolve.log` (`--operator` überschreibt den Benutzernamen).
+
 ## Manifest
 
 SHA-256 über sortierte relative Pfade (`/`), Größe und SHA-256 jeder Datei; fehlende Dateien und leere
@@ -113,6 +134,8 @@ Einträge mit und ohne Stempelzeilen, Aktivvertrag gültig).
   bleibt so auch ohne Klick „aktiv“, ein Standby wird abgelehnt (`held`). Verliert der Dienst den star,
   stoppen Schreibaktionen (HTTP 409), `status()["star"]` zeigt `held: false`, `lost_count` und den Fehler,
   und der Heartbeat erwirbt neu (inklusive Journal-Wiederaufnahme).
+  Der Zugriff auf den gehaltenen star (erneuern, verlieren) läuft über einen eigenen kleinen Lock, nicht über den
+  Mutation-Lock: keine neue Sperrreihenfolge.
 * **Einmalige CLI-Aufrufe und LocalStar** erwerben den star pro Transaktion.
 
 ## Rollen und `rebaseline`
