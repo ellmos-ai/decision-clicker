@@ -12,9 +12,13 @@ from __future__ import annotations
 import base64
 import contextlib
 import functools
+import hashlib
+import os
 import re
 import shutil
+import stat
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -62,13 +66,46 @@ def _read(path: Path) -> tuple[str, bool]:
     return raw.decode("utf-8-sig"), has_bom
 
 
-def _in_chain(settings: Settings, path: Path) -> bool:
-    """Liegt ``path`` im Ressourcenumfang (Kettenordner)? Backups liegen nie darin."""
+_REPARSE_LINK_TAGS = (0xA000000C, 0xA0000003)  # Windows: Symlink, Junction (Cloud-Platzhalter sind keine Links)
+
+
+def _is_link(path: Path) -> bool:
     try:
-        Path(path).resolve().relative_to(Path(settings.chain_dir).resolve())
-    except ValueError:
+        info = os.lstat(path)
+    except OSError:
         return False
-    return True
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) in _REPARSE_LINK_TAGS
+
+
+def _lexical(path: Path | str) -> Path:
+    return Path(os.path.normcase(os.path.abspath(path)))
+
+
+def _in_chain(settings: Settings, path: Path) -> bool:
+    """Liegt ``path`` im Ressourcenumfang (Kettenordner)? Backups liegen nie darin. Zaehlt der
+    unaufgeloeste ODER der aufgeloeste Pfad als drin, gilt er als drin (ein Link ist kein Ausweg)."""
+    for here, base in ((_lexical(path), _lexical(settings.chain_dir)),
+                       (Path(path).resolve(), Path(settings.chain_dir).resolve())):
+        try:
+            here.relative_to(base)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _reject_links(settings: Settings, path: Path) -> None:
+    """Symlink oder Junction in irgendeiner Komponente unterhalb des Kettenordners: kein Durchlass."""
+    base = _lexical(settings.chain_dir)
+    try:
+        parts = _lexical(path).relative_to(base).parts
+    except ValueError:
+        raise WriteError(f"{Path(path).name}: erreicht die Kette ueber einen Link — abgelehnt.") from None
+    current = Path(os.path.abspath(settings.chain_dir))
+    for part in parts:
+        current = current / part
+        if _is_link(current):
+            raise WriteError(f"{current.name}: Symlink oder Junction im Kettenumfang — abgelehnt.")
 
 
 def _guard(settings: Settings, path: Path) -> None:
@@ -76,6 +113,7 @@ def _guard(settings: Settings, path: Path) -> None:
     den Stern -- ausschliesslich hier. Ohne gueltigen star: ``StarUnavailable`` (nur lesbar)."""
     if not _in_chain(settings, path):
         return
+    _reject_links(settings, path)
     tx = star.active_transaction(settings)
     if tx is None:
         raise StarUnavailable("Kein Polaris star: Kette ist nur lesbar.")
@@ -83,13 +121,27 @@ def _guard(settings: Settings, path: Path) -> None:
 
 
 def _write(settings: Settings, path: Path, text: str, has_bom: bool) -> None:
+    """Atomar: tmp im selben Ordner, dann ``os.replace`` (tmp-Namen zaehlen nicht zum Manifest)."""
     _guard(settings, path)
     data = text.encode("utf-8")
     if has_bom:
         data = b"\xef\xbb\xbf" + data
     if _in_chain(settings, path):
         path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+        tx = star.active_transaction(settings)
+        if tx is not None and tx.journal is not None and _lexical(path) == _lexical(
+                Path(settings.chain_dir) / path.name):
+            tx.journal.intend(path.name, hashlib.sha256(data).hexdigest())  # Hash VOR dem Schreiben vermerken
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}{star.TMP_SUFFIX}")
+    try:
+        with tmp.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _unlink(settings: Settings, path: Path) -> bool:
@@ -719,6 +771,7 @@ def decide_entry(
     except Exception:
         log.close()  # sauber zurueckgerollt: nichts offen
         raise
+    tx.commit_marker(ignore=log.data["txid"])  # R29-1: erst melden; scheitert das, bleibt das Journal liegen
     log.close()
     return {
         "ok": True, "id": entry["id"], "value": filled["value"],
@@ -819,6 +872,7 @@ def restore_decision(
     except Exception:
         log.close()
         raise
+    tx.commit_marker(ignore=log.data["txid"])
     log.close()
     restored["backup"] = str(active_backup) if active_backup else None
     marker["backup"] = str(done_backup) if done_backup else None

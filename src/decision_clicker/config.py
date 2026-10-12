@@ -13,6 +13,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import WriteError
+
 DEFAULT_PORT = 8096
 DEFAULT_HOST = "127.0.0.1"
 
@@ -81,6 +83,17 @@ class Settings:
     port: int = DEFAULT_PORT
     backup_root: Path | None = None
 
+    def __post_init__(self) -> None:
+        """R29-7: Sicherungen duerfen nicht im Kettenordner liegen (sie waeren Kettenmutationen)."""
+        if self.backup_root is not None:
+            def norm(value: Path) -> Path:
+                return Path(os.path.normcase(os.path.realpath(value)))
+            try:
+                norm(self.backup_root).relative_to(norm(self.chain_dir))
+            except ValueError:
+                return
+            raise WriteError(f"backup_root {self.backup_root} liegt im Kettenordner — nicht erlaubt.")
+
     @property
     def tools_dir(self) -> Path:
         return self.chain_dir / "_tools"
@@ -115,4 +128,6 @@ def load() -> Settings:
         chain_dir=Path(os.environ.get("DECISION_CLICKER_CHAIN", str(DEFAULT_CHAIN))),
         host=os.environ.get("DECISION_CLICKER_HOST", DEFAULT_HOST),
         port=int(os.environ.get("DECISION_CLICKER_PORT", str(DEFAULT_PORT))),
+        backup_root=Path(os.environ["DECISION_CLICKER_BACKUP_ROOT"]) if os.environ.get(
+            "DECISION_CLICKER_BACKUP_ROOT") else None,
     )

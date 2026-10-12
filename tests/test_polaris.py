@@ -286,7 +286,8 @@ def test_loss_between_journal_write_and_inflight_report_is_rebaselined_by_server
     assert not list((kette.chain_dir / star.JOURNAL_DIR).glob("*.json"))
 
 
-def test_restore_loss_is_completed_by_next_holder(kette, monkeypatch):
+@pytest.mark.parametrize("loss_at", [4, 5])  # 4: Restore geschrieben, Vermerk fehlt (pending); 5: vor dem Beleg
+def test_restore_loss_is_completed_by_next_holder(kette, monkeypatch, loss_at):
     dc = DecisionClicker(kette.chain_dir)
     key = first_open(kette)["key"]
     dc.decide(key, "A")
@@ -296,7 +297,7 @@ def test_restore_loss_is_completed_by_next_holder(kette, monkeypatch):
 
     def failing(self, margin=None):
         counter["n"] += 1
-        if counter["n"] >= 3:  # nach Journal und Restore, vor dem Beleg-Vermerk
+        if counter["n"] >= loss_at:
             expire_local_claims()
             raise StarLost("injiziert")
         return real(self, margin)
@@ -526,11 +527,18 @@ def test_open_inflight_marker_blocks_even_the_server_until_recovery(kette, serve
     assert journals
     hidden = journals[0].read_bytes()
     journals[0].unlink()  # Journal (noch) nicht synchron: kein Marker ableitbar
+    active = kette.chain_dir / "TO-DECIDE-USER.txt"
+    before_edit = active.read_bytes()
     hand_edit(kette)
     with pytest.raises(StarUnavailable) as err:
-        dc.create("z", frage="f", optionen=["A — a"])  # blockiert auch die Server-Rolle
-    assert err.value.reason == "inflight_open"
-    journals[0].write_bytes(hidden)  # Journal ist da: Recovery ueber den In-flight-Marker
+        dc.create("z", frage="f", optionen=["A — a"])  # blockiert auch die Server-Rolle (R29-2a)
+    assert err.value.reason == "journal_not_synced"
+    assert "rebaseline_external_change" not in server_lead.events
+    journals[0].write_bytes(hidden)
+    with pytest.raises(StarUnavailable) as err:  # Journal da, Kette passt nicht dazu: warten, nie verwerfen (R29-2b)
+        dc.create("z", frage="f", optionen=["A — a"])
+    assert err.value.reason == "journal_unmatched" and journals[0].exists()
+    active.write_bytes(before_edit)  # Journal ist da: Recovery ueber den In-flight-Marker
     assert dc.create("z", frage="f", optionen=["A — a"])["ok"]
     assert server_lead.inflight is False
 

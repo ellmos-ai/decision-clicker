@@ -34,6 +34,7 @@ class FakeLead:
         self.inflight = False
         self.reject_acquire = False  # Test: Neuerwerb voruebergehend verweigern
         self.events: list[str] = []
+        self.event_details: list[dict] = []  # wie BACH: previous_version/new_version je rebaseline
         self.skew = timedelta(0)  # verschiebt die Lead-Uhr (Ablauf erzwingen)
         self.fence = 0
         self.claim: dict | None = None
@@ -109,6 +110,11 @@ class FakeLead:
                 "resource_version": self.version, "renew_after_seconds": 40,
                 "margin_seconds": 15 if self.ttl >= 60 else 0.5}
 
+    @staticmethod
+    def _holder(c: dict) -> dict:
+        return {"worker_id": c["worker"], "host": c["host"], "role": "server", "intent": "decision-clicker",
+                "expires_at": _fmt(c["expires"])}
+
     def _deny(self, reason: str, now: datetime, **extra) -> tuple[int, dict]:
         return 409, {"granted": False, "reason": reason, "resource": self.resource, **extra,
                      "server_now": _fmt(now)}
@@ -118,23 +124,35 @@ class FakeLead:
         if method == "GET":
             payload = {"resource": self.resource, "leased": self._live(now), "fence": self.fence,
                        "resource_version": self.version, "server_now": _fmt(now),
-                       "version_inflight": self.inflight}
-            if self._live(now) and own_id and own_id == self.claim["id"]:
-                payload["own"] = True
+                       "version_inflight": self.inflight, "server_active": False,
+                       "last_rebaseline_at": None, "server_role": sorted(self.server_workers or {""})[0],
+                       "standby_roles": [], "renew_after_seconds": 40,
+                       "margin_seconds": 15 if self.ttl >= 60 else 0.5}
+            if self._live(now):
+                c = self.claim
+                payload.update({"holder": self._holder(c), "issued_at": _fmt(c["issued"]),
+                                "expires_at": _fmt(c["expires"]), "ttl_profile": "POLARIS"})
+                if own_id and own_id == c["id"]:
+                    payload["own"] = True
             return 200, payload
         if suffix == "":
             worker = body.get("worker_id", "")
             if self.allowed is not None and worker not in self.allowed:
                 return self._deny("device_not_bound", now)
             if self._live(now) or self.reject_acquire:
-                return self._deny("held", now)
+                same = self.claim is not None and self.claim["worker"] == worker
+                extra = {"holder": self._holder(self.claim)} if self._live(now) else {}
+                return self._deny("already_held_by_caller" if same and self._live(now) else "held", now, **extra)
             if self.version is not None and body.get("resource_version") is None:
-                return self._deny("resource_version_required", now, expected_resource_version=self.version)
+                return self._deny("resource_version_required", now, expected_resource_version=self.version,
+                                  version_inflight=self.inflight)
             if self.version is not None and body.get("resource_version") != self.version:
                 if not (body.get("rebaseline") and worker in self.server_workers):
-                    return self._deny("stale_resource_version", now, expected_resource_version=self.version)
+                    return self._deny("stale_resource_version", now, expected_resource_version=self.version,
+                                      version_inflight=self.inflight)
                 if self.inflight:
                     return self._deny("inflight_open", now, expected_resource_version=self.version)
+                self.event_details.append({"previous_version": self.version, "new_version": body["resource_version"]})
                 self.version, self.inflight = body["resource_version"], False
                 self.events.append("rebaseline_external_change")
             self.fence += 1

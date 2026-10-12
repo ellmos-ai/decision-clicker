@@ -1,8 +1,8 @@
 # Polaris (Polarstern): ein Schreiber für die Kette
 
 Nur wer den Polaris star hält, schreibt in die Kettendateien (`TO-DECIDE-USER.txt`,
-`DECIDED-AND-DONE.md`, `_decision-archive/`, `_archive/`, `_polaris-journal/`) und legt
-LOCK-Dateien an oder entfernt sie. Lesen bleibt immer möglich.
+`DECIDED-AND-DONE.md`, `_decision-archive/`, `_archive/`) und in das Transaktionsjournal
+(`_polaris-journal/`, liegt bewusst außerhalb des Manifests, siehe unten). Lesen bleibt immer möglich.
 
 **Ehrliche Garantie:** Polaris schließt aus, dass zwei Writer *gleichzeitig gültig* schreiben
 dürfen. Ein angehaltener Alt-Halter (VM-Suspend, blockierte Platte), der nach einer Übernahme noch
@@ -21,25 +21,58 @@ gibt es nicht. ServerStar: `DECISION_CLICKER_LEAD_URL` (oder `BACH_LEAD_URL`),
 `DECISION_CLICKER_DEVICE_TOKEN` (oder `BACH_DEVICE_TOKEN`), optional `DECISION_CLICKER_WORKER`
 (`agent@host`), `DECISION_CLICKER_STAR_RESOURCE` (Standard `decisions-chain`).
 `DECISION_CLICKER_STATE_DIR` setzt den Nutzerordner (Backups, `star.db`); **Backups liegen nie im
-Kettenordner.**
+Kettenordner:** ein `backup_root` (`DECISION_CLICKER_BACKUP_ROOT`) im Kettenordner wird beim Laden der
+Konfiguration abgelehnt.
+
+**Transport:** `https://` ist Pflicht. `http://` gilt nur für Loopback (`127.0.0.0/8`, `::1`, `localhost`) und
+Tailscale (`100.64.0.0/10`, Hostnamen `*.ts.net`; WireGuard verschlüsselt den Weg). Jeder andere Lead mit
+`http://` wird fail-closed abgelehnt (Kette nur lesbar). Das Geräte-Token erscheint nie in Logs,
+Fehlertexten oder Reprs.
 
 ## Ablauf einer Transaktion
 
 1. Erwerb mit dem Manifest-Hash des lokalen Standes (Sync-Schranke). Passt er nicht zum zuletzt
    gemeldeten Stand: `stale_resource_version`, nur lesbar.
-2. Offenes Journal des Vorgängers abschließen (idempotent) oder verwerfen, wenn nichts geschrieben wurde.
+2. Offenes Journal des Vorgängers abschließen oder warten (Abschnitt Recovery).
 3. Vor **jeder** Kettenschreibung prüft der Choke-Point (`writer._guard`) den Stern: lokale Frist ab
-   Sendezeit und Monoton-Uhr, bei Zeitlücke online.
-4. Mehrdatei-Transaktionen (`decide_entry`, `restore_decision`/`undo_decision`) schreiben vorher ein
-   Journal `_polaris-journal/<tx>.json` (Plan) und danach den Fortschritt je Schritt. Bei Sternverlust:
-   stoppen, **kein Auto-Revert**, Journal bleibt liegen.
-5. Letzter Schritt: Manifest-Hash als Commit-Marker per renew melden, dann zurückgeben.
+   Sendezeit und Monoton-Uhr, bei Zeitlücke online. Kettendateien werden atomar geschrieben (tmp im selben
+   Ordner, `fsync`, `os.replace`; `*.polaris-tmp` zählt nicht zum Manifest und wird bei Fehlern entfernt).
+   Pfade im Kettenumfang mit Symlink oder Junction in irgendeiner Komponente lehnt der Choke-Point ab
+   (`WriteError`), auch mit gültigem Stern.
+4. Mehrdatei-Transaktionen (`decide_entry`, `restore_decision`/`undo_decision`): **Journal → In-flight-Marker →
+   Schritte → Commit-Marker → Journal löschen.** Das Journal (`_polaris-journal/<tx>.json`, atomar, mit
+   Prüfsumme) trägt Plan, die Datei-Hashes vor der Transaktion, nach jedem Schritt und vorab den Hash des
+   nächsten Schreibens (`pending`). Bei Sternverlust: stoppen, **kein Auto-Revert**, Journal bleibt liegen.
+5. Der Commit-Marker (renew mit dem Manifest-Hash, löscht den In-flight-Marker) kommt **vor** dem Löschen des
+   Journals. Scheitert er, bleibt das Journal liegen und der Nachfolger schließt ab. Liegt ein fremdes
+   Journal offen, meldet eine Transaktion beim Verlassen keinen Manifest-Hash (der In-flight-Marker bleibt).
+
+## Recovery: nur mit Beweis, sonst warten
+
+| Lage | Verhalten |
+|---|---|
+| Lead meldet In-flight, Journal lokal nicht da | `journal_not_synced`, nur lesbar, später erneut |
+| Journal korrupt, abgeschnitten, Prüfsumme falsch | `journal_corrupt`, nur lesbar, kein Raten |
+| Journal da, Kette passt weder zu „vorher“ noch zum Zwischenstand nach dem letzten Vermerk (verzögerte Kopie, Fremdänderung) | `journal_unmatched`, warten, **nie verwerfen** |
+| Kette == Zwischenstand, In-flight über dieses Journal erworben | Roll-forward, dann Commit-Marker, dann Journal löschen |
+| Kette == „vorher“ (nichts geschrieben) | Journal verwerfen |
+| Journal ohne In-flight-Marker (Commit gelungen, Löschen nicht): Kette == Ziel | Journal löschen |
+| Journal ohne In-flight-Marker, unvollständig | `journal_unmatched`, warten |
+
+Ein Schreiben, dessen Fortschrittsvermerk fehlt (Abbruch zwischen Schreiben und Vermerk), wird über den
+vorab vermerkten Hash (`pending`) bewiesen. Restrisiko: eine zusätzliche, nicht journalisierte Schreibung
+(Revert-Pfad nach einem Fehler) lässt die Kette „unmatched“; das braucht dann Handarbeit.
 
 ## Manifest
 
 SHA-256 über sortierte relative Pfade (`/`), Größe und SHA-256 jeder Datei; fehlende Dateien und leere
-Ordner gehen als `MISSING` ein. Pfade: siehe `star.CHAIN_PATHS`. Identisch zu BACH `lease_core.manifest_version`
-für Dateien und fehlende Pfade.
+Ordner gehen als `MISSING` ein. Pfade: siehe `star.CHAIN_PATHS` (`TO-DECIDE-USER.txt`,
+`DECIDED-AND-DONE.md`, `_decision-archive/`, `_archive/`). Identisch zu BACH `lease_core.manifest_version`
+für Dateien und fehlende Pfade; der Client lässt zusätzlich `*.polaris-tmp` aus (BACH berechnet nie ein
+Manifest, es speichert nur den gemeldeten Hash). **Nicht im Manifest, bewusst:** das Journal (sein
+Löschen darf den gemeldeten Stand nicht ändern) und **LOCK-Dateien** (`LOCK*.txt`): fremde Agenten legen sie
+laufend an und löschen sie; sie in das Manifest zu nehmen, risse die Sync-Schranke dauerhaft. Der Writer legt
+LOCK-Dateien nur mit dem Stern an oder entfernt sie; ihr Inhalt schützt keinen Kettenstand.
 
 ## Fence-Stempel (kein Formatbruch)
 
@@ -66,11 +99,19 @@ Einträge mit und ohne Stempelzeilen, Aktivvertrag gültig).
 ## Rollen und `rebaseline`
 
 `DECISION_CLICKER_STAR_ROLE` = `standby` (Standard) | `server`. Nur die Server-Rolle (die der Lead aus
-Registrierung und Gerät kennt) darf bei abweichendem Manifest ohne offenen In-flight-Marker per `rebaseline`
-erwerben: externe Änderungen (z. B. direkt angehängte Agenteneinträge) setzen den Stand neu, der Lead
-protokolliert `rebaseline_external_change`. Ein offener In-flight-Marker blockiert auch den Server
-(`inflight_open`, erst Recovery). Der Standby braucht immer den exakten Abgleich. LocalStar (nur ein Host)
-rebaselinet automatisch.
+Registrierung und Gerät kennt) darf bei abweichendem Manifest per `rebaseline` erwerben (externe Änderungen,
+z. B. direkt angehängte Agenteneinträge setzen den Stand neu), und nur wenn
+
+* kein Journal lokal liegt und der Lead keinen In-flight-Marker führt (`journal_open` bzw. `inflight_open`;
+  ohne lokales Journal bei offenem Marker: `journal_not_synced`) und
+* das lokale Manifest über ein **Stabilitätsfenster** gleich bleibt: zwei Messungen im Abstand von 60 s
+  (`DECISION_CLICKER_REBASELINE_WINDOW`, Sekunden, `0` schaltet ab), dazu unveränderte Datei-mtimes im
+  Kettenumfang. Sonst `rebaseline_unstable`, später erneut versuchen.
+
+Der Lead protokolliert `rebaseline_external_change` mit `previous_version` und `new_version` (altem und
+neuem Hash). **Restrisiko:** dauert ein OneDrive-Sync länger als das Fenster und ruht dabei, kann eine
+Teilkopie als neuer Stand gelten. Der Standby braucht immer den exakten Abgleich. LocalStar (nur ein Host)
+rebaselinet ohne Fenster.
 
 ## Nicht geschützt (außerhalb des Ressourcenumfangs)
 
@@ -80,6 +121,7 @@ in `_tools/`) und die Übernahme-Markierung im Desktop-Postfach (Datei außerhal
 
 ## Bekanntes Restfenster
 
-Bricht der star genau zwischen dem Schreiben des Journals und der Meldung des In-flight-Markers ab, kann die
-Server-Rolle per `rebaseline` weiterarbeiten (das Journal wird verworfen, weil nichts geschrieben war); ein
-Standby bleibt bis dahin nur lesbar (`stale_resource_version`).
+Bricht der star genau zwischen dem Schreiben des Journals und der Meldung des In-flight-Markers ab, steht
+das Journal mit allen Hashes „vorher“: der Nachfolger verwirft es (nachweislich nichts geschrieben). Die
+Server-Rolle rebaselinet danach nur nach dem Stabilitätsfenster und ohne Journal; ein Standby bleibt bis
+dahin nur lesbar (`stale_resource_version`).

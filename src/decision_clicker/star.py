@@ -26,6 +26,7 @@ als Commit-Marker per renew melden, zurueckgeben.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -38,10 +39,11 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .config import Settings, state_dir
 from .errors import StarLost, StarUnavailable
@@ -53,8 +55,11 @@ DEFAULT_MAX_RESPONSE = 5.0
 DEFAULT_TIMEOUT = 8.0
 LOCAL_TTL = 120.0
 JOURNAL_DIR = "_polaris-journal"
-#: Ressourcenumfang (Festlegung 4): Kettendateien samt Journal. Backups gehoeren nicht dazu.
-CHAIN_PATHS = ("TO-DECIDE-USER.txt", "DECIDED-AND-DONE.md", "_decision-archive", "_archive", JOURNAL_DIR)
+#: Ressourcenumfang: Kettendateien. Das Journal (R29-1) und Backups gehoeren nicht dazu; LOCK-Dateien
+#: bewusst auch nicht (fremde Agenten legen sie staendig an, siehe docs/POLARIS.md).
+CHAIN_PATHS = ("TO-DECIDE-USER.txt", "DECIDED-AND-DONE.md", "_decision-archive", "_archive")
+TMP_SUFFIX = ".polaris-tmp"
+DEFAULT_STABLE_SECONDS = 60.0
 MODES = ("auto", "server", "local")
 _WORKER_HOST_RE = re.compile(r"[^A-Za-z0-9._-]")
 
@@ -65,13 +70,13 @@ _WORKER_HOST_RE = re.compile(r"[^A-Za-z0-9._-]")
 def manifest_version(root: Path | str, paths: Iterable[str]) -> str:
     """SHA-256 ueber sortierte relative Pfade (``/``), Groesse und SHA-256 jeder
     Datei; fehlende Dateien gehen als ``MISSING`` ein, Ordner rekursiv. Ein leerer Ordner zaehlt
-    wie ein fehlender (sonst unterschiede sich der Stand je nachdem, ob ein Host einen leeren
-    Journal-Ordner angelegt hat)."""
+    wie ein fehlender. Temporaere Schreibdateien (``.polaris-tmp``) zaehlen nicht."""
     base = Path(root)
     entries: dict[str, str] = {}
     for rel in paths:
         target = base / rel
-        files = sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir() else []
+        files = sorted(p for p in target.rglob("*")
+                       if p.is_file() and not p.name.endswith(TMP_SUFFIX)) if target.is_dir() else []
         if files:
             for sub in files:
                 entries[sub.relative_to(base).as_posix()] = _file_line(sub)
@@ -95,6 +100,30 @@ def chain_manifest(settings: Settings) -> str:
     return manifest_version(settings.chain_dir, CHAIN_PATHS)
 
 
+def _snapshot(settings: Settings) -> tuple[str, tuple]:
+    """Manifest plus Datei-mtimes im Kettenumfang (Stabilitaetsfenster)."""
+    base = Path(settings.chain_dir)
+    times = []
+    for rel in CHAIN_PATHS:
+        target = base / rel
+        for item in ([target] if target.is_file() else sorted(target.rglob("*")) if target.is_dir() else []):
+            if item.is_file() and not item.name.endswith(TMP_SUFFIX):
+                times.append((item.relative_to(base).as_posix(), item.stat().st_mtime_ns))
+    return chain_manifest(settings), tuple(times)
+
+
+def stable_manifest(settings: Settings, seconds: float) -> str:
+    """Manifest erst melden, wenn es ``seconds`` lang unveraendert blieb (R29-4, Teilkopie-Schutz)."""
+    if seconds <= 0:
+        return chain_manifest(settings)
+    first = _snapshot(settings)
+    time.sleep(seconds)
+    second = _snapshot(settings)
+    if first != second:
+        raise _denied("rebaseline_unstable")
+    return second[0]
+
+
 # ---------------------------------------------------------------------------
 # Konfiguration
 # ---------------------------------------------------------------------------
@@ -105,13 +134,14 @@ class StarConfig:
     worker_id: str
     host: str
     lead_url: str = ""
-    token: str = ""
+    token: str = field(default="", repr=False)  # nie in Logs, Fehlertexten oder Reprs
     margin: float = DEFAULT_MARGIN
     timeout: float = DEFAULT_TIMEOUT
     max_response: float = DEFAULT_MAX_RESPONSE
     chain_key: str = ""
     role: str = "standby"  # "server" darf bei externer Aenderung rebaselinen (nur ServerStar-Rolle am Lead)
     renew_seconds: float = 40.0
+    stable_seconds: float = DEFAULT_STABLE_SECONDS  # Stabilitaetsfenster vor rebaseline
 
 
 def is_ecosystem_chain(settings: Settings, env: dict[str, str] | None = None) -> bool:
@@ -121,6 +151,23 @@ def is_ecosystem_chain(settings: Settings, env: dict[str, str] | None = None) ->
         return True
     parts = [p.lower() for p in Path(settings.chain_dir).parts]
     return any(a == "_control" and b == "_decisions" for a, b in zip(parts, parts[1:], strict=False))
+
+
+def transport_ok(url: str) -> bool:
+    """https:// immer; http:// nur fuer Loopback und Tailscale (100.64.0.0/10, ``*.ts.net``, WireGuard)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https":
+        return bool(host)
+    if parts.scheme != "http" or not host:
+        return False
+    if host == "localhost" or host.endswith(".ts.net"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_loopback or addr in ipaddress.ip_network("100.64.0.0/10")
 
 
 def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig:
@@ -143,6 +190,8 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
     if role not in ("server", "standby"):
         raise StarUnavailable(f"DECISION_CLICKER_STAR_ROLE={role!r} ist ungueltig (server | standby).")
     renew_seconds = float(env.get("DECISION_CLICKER_STAR_RENEW") or 40)
+    window = env.get("DECISION_CLICKER_REBASELINE_WINDOW")
+    stable = DEFAULT_STABLE_SECONDS if window in (None, "") else max(0.0, float(window))
     if mode == "local" and eco:
         raise StarUnavailable(
             "LocalStar gilt nur fuer nicht geteilte Ketten; diese Kette ist im Oekosystem "
@@ -150,16 +199,19 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
     if mode == "server" or eco:
         url = (env.get("DECISION_CLICKER_LEAD_URL") or env.get("BACH_LEAD_URL") or "").rstrip("/")
         token = env.get("DECISION_CLICKER_DEVICE_TOKEN") or env.get("BACH_DEVICE_TOKEN") or ""
-        scheme_ok = url.startswith(("http://", "https://"))
-        if not url or not scheme_ok or not token:
+        if not url or not token:
             raise StarUnavailable(
                 "Oekosystem-Kette ohne konfigurierten BACH-Lead (DECISION_CLICKER_LEAD_URL) "
                 "oder Geraete-Token — Kette ist nur lesbar.")
+        if not transport_ok(url):
+            raise StarUnavailable(
+                "Der BACH-Lead muss per https:// erreichbar sein (http:// nur fuer Loopback und Tailscale: "
+                "100.64.0.0/10 bzw. *.ts.net) — Kette ist nur lesbar.")
         return StarConfig("server", resource, worker, host, url, token, margin, role=role,
-                          renew_seconds=renew_seconds)
+                          renew_seconds=renew_seconds, stable_seconds=stable)
     key = "local:" + str(Path(settings.chain_dir).resolve())
     return StarConfig("local", resource, worker, host, margin=margin, chain_key=key, role="server",
-                      renew_seconds=renew_seconds)
+                      renew_seconds=renew_seconds, stable_seconds=0.0)  # ein Host: kein Sync-Rennen
 
 
 def describe(settings: Settings) -> dict[str, Any]:
@@ -215,12 +267,22 @@ _DENIED_TEXT = {
     "device_not_bound": "dieses Geraet darf nicht als dieser Worker schreiben (device_not_bound)",
     "worker_not_allowed": "dieser Worker ist fuer die Ressource nicht zugelassen (worker_not_allowed)",
     "server_priority": "der Server-Schreiber hat Vorrang angemeldet (server_priority)",
+    "journal_not_synced": "eine Transaktion ist beim Lead offen, ihr Journal ist auf diesem Host noch nicht "
+                          "angekommen (journal_not_synced) — spaeter erneut versuchen",
+    "journal_unmatched": "Journal und Kette passen noch nicht zusammen, vermutlich nicht synchron "
+                         "(journal_unmatched) — spaeter erneut versuchen",
+    "journal_corrupt": "ein Journal ist beschaedigt oder unvollstaendig (journal_corrupt)",
+    "rebaseline_unstable": "die Kette aendert sich noch (Sync laeuft?), Stabilitaetsfenster nicht erreicht "
+                           "(rebaseline_unstable) — spaeter erneut versuchen",
+    "journal_open": "ein Journal liegt offen, kein rebaseline (journal_open)",
 }
 
 
-def _denied(reason: str) -> StarUnavailable:
-    error = StarUnavailable(f"Kein Polaris star: {_DENIED_TEXT.get(reason, reason)} — Kette ist nur lesbar.")
+def _denied(reason: str, detail: str = "", inflight: bool = False) -> StarUnavailable:
+    text = f"{_DENIED_TEXT.get(reason, reason)}{' [' + detail + ']' if detail else ''}"
+    error = StarUnavailable(f"Kein Polaris star: {text} — Kette ist nur lesbar.")
     error.reason = reason  # type: ignore[attr-defined]
+    error.inflight = inflight  # type: ignore[attr-defined]
     return error
 
 
@@ -304,7 +366,8 @@ class ServerStar:
             payload["rebaseline"] = True
         status, data, mono, wall = self._request("POST", "", payload)
         if status != 200:
-            raise _denied(str(data.get("reason") or f"http_{status}"))
+            raise _denied(str(data.get("reason") or f"http_{status}"),
+                          inflight=bool(data.get("version_inflight")))
         return self._hold(data, mono, wall)
 
     def renew(self, hold: Hold, version: str | None = None, inflight: bool = False) -> Hold:
@@ -366,7 +429,8 @@ class LocalStar:
             if stored is not None and version != stored:
                 if not (rebaseline and version is not None) or inflight:
                     conn.rollback()
-                    raise _denied("stale_resource_version" if version else "resource_version_required")
+                    raise _denied("stale_resource_version" if version else "resource_version_required",
+                                  inflight=bool(inflight))
                 rebased = True  # der einzige Host ist die Server-Rolle: externer Edit -> neuer Stand
             new = uuid.uuid4().hex
             done = conn.execute("UPDATE local_star SET claim_id = ?, expires = ?, fence = fence + 1, "
@@ -438,6 +502,8 @@ class Transaction:
         self.settings, self.cfg, self.provider, self.service = settings, cfg, provider, service
         self.txid = uuid.uuid4().hex[:8]
         self._hold: Hold | None = None
+        self.via = "manifest"  # wie erworben: manifest | inflight:<txid> | rebaseline
+        self.journal: Any = None  # offenes Journal dieser Transaktion (vermerkt Hashes vor dem Schreiben)
 
     @property
     def hold(self) -> Hold | None:
@@ -474,35 +540,46 @@ class Transaction:
         assert self.hold is not None
         self.hold = self.provider.renew(self.hold, version, inflight)
 
-    def commit_marker(self) -> None:
-        """Letzter Schritt einer abgeschlossenen Transaktion: Manifest-Hash per renew melden."""
+    def commit_marker(self, ignore: str | None = None) -> bool:
+        """Manifest-Hash per renew melden (loescht den In-flight-Marker). Liegt ein anderes Journal als
+        ``ignore`` offen, wird NICHT gemeldet: der In-flight-Marker bleibt, die Recovery gehoert dem Journal."""
+        folder = Path(self.settings.chain_dir) / JOURNAL_DIR
+        if any(p.stem != ignore for p in (folder.glob("*.json") if folder.is_dir() else [])):
+            return False
         self.report(chain_manifest(self.settings))
+        return True
 
 
-def _acquire(settings: Settings, provider: ServerStar | LocalStar, role: str) -> Hold:
-    """Erwerb mit Sync-Schranke.
+def _acquire(settings: Settings, provider: ServerStar | LocalStar, cfg: StarConfig) -> tuple[Hold, str]:
+    """Erwerb mit Sync-Schranke. Liefert den star und den Weg (``Transaction.via``).
 
     1. lokaler Manifest-Hash; 2. nach Sternverlust in einer journalisierten Transaktion: In-flight-Marker
-    des offenen Journals; 3. nur in der Server-Rolle ``rebaseline`` (externe Aenderung, z. B. angehaengter
-    Agenteneintrag): den lokalen Stand als neue Version melden. Ein offener In-flight-Marker blockiert
-    auch den Server (erst Recovery). Der Standby braucht immer den exakten Abgleich."""
+    eines lokal vorhandenen Journals (ohne lokales Journal: ``journal_not_synced``, warten); 3. nur die
+    Server-Rolle, nur ohne Journal und ohne In-flight, nur nach dem Stabilitaetsfenster: ``rebaseline``
+    (externe Aenderung). Der Standby braucht immer den exakten Abgleich."""
     local = chain_manifest(settings)
     try:
-        return provider.acquire(local)
+        return provider.acquire(local), "manifest"
     except StarUnavailable as exc:
         if getattr(exc, "reason", None) != "stale_resource_version":
             raise
         stale = exc
     folder = Path(settings.chain_dir) / JOURNAL_DIR
-    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+    journals = sorted(folder.glob("*.json")) if folder.is_dir() else []
+    for path in journals:
         try:
-            return provider.acquire(inflight_version(path.stem))
+            return provider.acquire(inflight_version(path.stem)), f"inflight:{path.stem}"
         except StarUnavailable as again:
             if getattr(again, "reason", None) != "stale_resource_version":
                 raise
-    if role == "server":
-        return provider.acquire(local, rebaseline=True)
-    raise stale
+    if getattr(stale, "inflight", False):
+        raise _denied("journal_not_synced")
+    if cfg.role != "server":
+        raise stale
+    if journals:
+        raise _denied("journal_open")
+    stable = stable_manifest(settings, cfg.stable_seconds)
+    return provider.acquire(stable, rebaseline=True), "rebaseline"
 
 
 # ---------------------------------------------------------------------------
@@ -533,10 +610,11 @@ class Service:
     def _try_acquire(self) -> None:
         try:
             with self.mutation_lock:
-                hold = _acquire(self.settings, self.provider, self.cfg.role)
+                hold, via = _acquire(self.settings, self.provider, self.cfg)
                 self.hold, self.last_error = hold, None
                 if self.recover is not None:
                     tx = Transaction(self.settings, self.cfg, self.provider, service=self)
+                    tx.via = via
                     registry = _tls.__dict__.setdefault("active", {})
                     key = str(Path(self.settings.chain_dir))
                     registry[key] = tx
@@ -546,8 +624,12 @@ class Service:
                         registry.pop(key, None)
         except StarUnavailable as exc:
             self.last_error = str(exc)
-            if isinstance(exc, StarLost):
-                self.hold = None
+            held, self.hold = self.hold, None  # fail-closed: ohne gelungene Recovery kein gehaltener star
+            if held is not None and not isinstance(exc, StarLost):
+                try:
+                    self.provider.release(held)  # ohne Version: ein offener In-flight-Marker bleibt
+                except StarUnavailable:
+                    pass
 
     def _loop(self) -> None:
         while not self._stop.wait(self.cfg.renew_seconds):
@@ -569,13 +651,22 @@ class Service:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
-        hold, self.hold = self.hold, None
-        if hold is not None:
-            try:
-                hold = self.provider.renew(hold, chain_manifest(self.settings))
-                self.provider.release(hold)
-            except StarUnavailable:
-                pass
+        if not self.mutation_lock.acquire(timeout=30):  # laufende Transaktion zu Ende fuehren lassen
+            self.hold = None  # nichts melden oder freigeben: die Frist laeuft fail-closed ab
+            return
+        try:
+            hold, self.hold = self.hold, None
+            if hold is not None:
+                try:
+                    tx = Transaction(self.settings, self.cfg, self.provider)
+                    tx.hold = hold
+                    if tx.commit_marker():
+                        hold = tx.hold
+                    self.provider.release(hold)
+                except StarUnavailable:
+                    pass
+        finally:
+            self.mutation_lock.release()
 
     def status(self) -> dict[str, Any]:
         hold = self.hold
@@ -646,7 +737,7 @@ def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None
     cfg = resolve(settings)
     provider = make_provider(cfg)
     tx = Transaction(settings, cfg, provider)
-    tx.hold = _acquire(settings, provider, cfg.role if cfg.kind == "server" else "server")
+    tx.hold, tx.via = _acquire(settings, provider, cfg)
     registry[key] = tx
     try:
         if on_acquired is not None:

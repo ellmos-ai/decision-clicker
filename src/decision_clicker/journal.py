@@ -7,8 +7,15 @@ Schrittplan) und danach den Fortschritt je Schritt. Geht der Stern mitten
 drin verloren, wird gestoppt: kein Auto-Revert, das Journal bleibt liegen.
 Der naechste Halter findet es beim Erwerb und schliesst die Transaktion
 idempotent ab (Roll-forward) oder verwirft es, wenn nichts geschrieben wurde,
-bevor er Neues schreibt. Der Journal-Ort (``_polaris-journal/``) liegt im
-Ressourcenumfang und damit im Manifest der Sync-Schranke.
+bevor er Neues schreibt. Der Journal-Ort (``_polaris-journal/``) liegt AUSSERHALB des
+Manifests der Sync-Schranke: das Loeschen des Journals aendert den gemeldeten Stand nicht,
+deshalb kommt der Commit-Marker vor dem Loeschen (R29-1).
+
+Recovery nur mit Beweis (R29-2): Das Journal haelt die Datei-Hashes vor der Transaktion und nach
+jedem Schritt. Roll-forward nur, wenn die lokale Kette genau dem Zustand nach dem letzten
+vermerkten Schritt entspricht; jede andere Kette ist noch nicht synchron oder fremd: warten,
+nie verwerfen. Verworfen wird nur, wenn nachweislich nichts geschrieben wurde. Das Journal wird
+atomar geschrieben und traegt eine Pruefsumme (``journal_corrupt`` -> nur lesbar).
 """
 from __future__ import annotations
 
@@ -20,10 +27,15 @@ from pathlib import Path
 
 from .config import Settings
 from .errors import StarUnavailable
-from .star import JOURNAL_DIR, Transaction, inflight_version
+from .star import JOURNAL_DIR, Transaction, _denied, inflight_version
 
 SCHEMA = "decision-clicker.journal.v1"
 ACTIVE_NAME = "TO-DECIDE-USER.txt"
+DONE_NAME = "DECIDED-AND-DONE.md"
+#: Welche Kettendatei ein Schritt schreibt: so laesst sich der Hash VOR dem Schreiben vermerken
+#: (``pending``) und ein Abbruch zwischen Schreiben und Fortschrittsvermerk beweisen.
+STEP_FILE = {"decide": {"fill": ACTIVE_NAME, "done": DONE_NAME, "remove": ACTIVE_NAME},
+             "restore": {"restore": ACTIVE_NAME, "mark": DONE_NAME}}
 
 
 def journal_dir(settings: Settings) -> Path:
@@ -32,6 +44,17 @@ def journal_dir(settings: Settings) -> Path:
 
 def sha256_of(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def chain_hashes(settings: Settings) -> dict[str, str | None]:
+    """Hashes der beiden von Mehrdatei-Transaktionen geschriebenen Kettendateien."""
+    return {ACTIVE_NAME: sha256_of(Path(settings.chain_dir) / ACTIVE_NAME),
+            DONE_NAME: sha256_of(settings.done_file)}
+
+
+def _checksum(data: dict) -> str:
+    body = {k: v for k, v in data.items() if k != "checksum" and not k.startswith("_")}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 class Journal:
@@ -45,27 +68,38 @@ class Journal:
         data = {
             "schema": SCHEMA, "txid": tx.txid, "op": op, "resource": tx.cfg.resource, "fence": tx.fence,
             "host": tx.cfg.host, "entry_id": entry_id, "started": datetime.now().isoformat(timespec="seconds"),
-            "hashes_before": {
-                ACTIVE_NAME: sha256_of(Path(settings.chain_dir) / ACTIVE_NAME),
-                "DECIDED-AND-DONE.md": sha256_of(settings.done_file),
-            },
+            "hashes_before": chain_hashes(settings), "hashes_after": {},
             "steps": steps, "done": [], "params": params,
         }
         journal = cls(settings, data)
+        journal.tx = tx
         journal._store()
+        tx.journal = journal
         tx.report(inflight_version(tx.txid), inflight=True)  # ab hier erwirbt der Nachfolger ueber das Journal
         return journal
 
     def _store(self) -> None:
         from . import writer  # spaet: writer importiert dieses Modul
+        self.data["checksum"] = _checksum(self.data)
         writer._write(self.settings, self.path, json.dumps(self.data, ensure_ascii=False, indent=1) + "\n", False)
 
+    def intend(self, name: str, digest: str) -> None:
+        """Vor dem Schreiben einer Kettendatei: ihren kuenftigen Hash vermerken (nur fuer den naechsten Schritt)."""
+        done, steps = len(self.data["done"]), self.data["steps"]
+        if done < len(steps) and STEP_FILE.get(self.data["op"], {}).get(steps[done]) == name:
+            self.data["pending"] = {"step": steps[done], "file": name, "hash": digest}
+            self._store()
+
     def advance(self, step: str) -> None:
+        """Schritt ist geschrieben: Fortschritt samt Ist-Hashes (Beweis fuer die Recovery) vermerken."""
+        self.data.pop("pending", None)
         self.data["done"].append(step)
+        self.data["hashes_after"][step] = chain_hashes(self.settings)
         self._store()
 
     def close(self) -> None:
         from . import writer
+        self.tx.journal = None
         writer._unlink(self.settings, self.path)
 
 
@@ -77,9 +111,13 @@ def open_journals(settings: Settings) -> list[dict]:
     for path in sorted(folder.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise StarUnavailable(f"Offenes Journal {path.name} ist unlesbar ({exc}) — nicht abschliessbar, "
-                                  "Kette bleibt nur lesbar.") from exc
+            if (not isinstance(data, dict) or data.get("schema") != SCHEMA or data.get("txid") != path.stem
+                    or data.get("checksum") != _checksum(data)):
+                raise ValueError("Pruefsumme oder Schema stimmt nicht")
+            for key in ("hashes_before", "hashes_after", "steps", "done", "params", "op", "entry_id"):
+                data[key]
+        except (OSError, ValueError, KeyError) as exc:
+            raise _denied("journal_corrupt", f"{path.name}: {exc}") from exc
         data["_path"] = path
         found.append(data)
     return found
@@ -126,23 +164,53 @@ def _done_block(settings: Settings, entry_id: str, txid: str, needle: str) -> bo
     return False
 
 
+def _classify(settings: Settings, tx: Transaction, data: dict) -> str:
+    """``discard`` (nichts geschrieben), ``forward`` (Roll-forward) oder ``delete`` (nur noch loeschen);
+    sonst ``StarUnavailable`` (warten)."""
+    states = [data["hashes_before"]] + [data["hashes_after"].get(step) for step in data["done"]]
+    done = len(data["done"])
+    local = chain_hashes(settings)
+    pending = data.get("pending")
+    if pending and done < len(data["steps"]) and pending.get("step") == data["steps"][done] \
+            and states[done] != local:
+        applied = dict(states[done], **{pending["file"]: pending["hash"]})
+        if applied == local:  # geschrieben, aber der Fortschrittsvermerk fehlt: der Hash war vorab vermerkt
+            data["done"].append(pending["step"])
+            data["hashes_after"][pending["step"]] = local
+            states.append(local)
+            done += 1
+    if states[done] != local:
+        raise _denied("journal_unmatched", f"{data['_path'].name}: Kette passt nicht zum Stand nach "
+                                           f"{done} von {len(data['steps'])} Schritten")
+    if done == 0:
+        return "discard"  # alle Hashes == vorher: nachweislich nichts geschrieben
+    if tx.via == f"inflight:{data['txid']}":
+        return "forward"
+    if done == len(data["steps"]):
+        return "delete"  # Commit war erfolgreich, nur das Loeschen fehlte; Kette == Ziel
+    raise _denied("journal_unmatched", f"{data['_path'].name}: Journal ohne In-flight-Marker ist unvollstaendig")
+
+
 def recover(settings: Settings, tx: Transaction) -> None:
     """Offene Journale abschliessen oder verwerfen, bevor etwas Neues geschrieben wird."""
     from . import writer
     for data in open_journals(settings):
         name = data["_path"].name
+        verdict = _classify(settings, tx, data)
         try:
-            if data.get("op") == "decide":
+            if verdict == "forward" and data.get("op") == "decide":
                 _recover_decide(settings, tx, data)
-            elif data.get("op") == "restore":
+            elif verdict == "forward" and data.get("op") == "restore":
                 _recover_restore(settings, tx, data)
-            else:
+            elif verdict == "forward":
                 raise StarUnavailable(f"Offenes Journal {name} hat eine unbekannte Operation.")
         except StarUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise StarUnavailable(f"Offenes Journal {name} ist nicht abschliessbar ({exc}) — Kette bleibt "
                                   "nur lesbar.") from exc
+        if verdict != "delete":
+            tx.commit_marker(ignore=data["txid"])  # erst den Stand melden, dann das Journal loeschen
         writer._unlink(settings, data["_path"])
 
 
