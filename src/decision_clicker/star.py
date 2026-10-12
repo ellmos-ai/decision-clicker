@@ -110,6 +110,8 @@ class StarConfig:
     timeout: float = DEFAULT_TIMEOUT
     max_response: float = DEFAULT_MAX_RESPONSE
     chain_key: str = ""
+    role: str = "standby"  # "server" darf bei externer Aenderung rebaselinen (nur ServerStar-Rolle am Lead)
+    renew_seconds: float = 40.0
 
 
 def is_ecosystem_chain(settings: Settings, env: dict[str, str] | None = None) -> bool:
@@ -137,6 +139,10 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
         host = worker.rsplit("@", 1)[1]
     resource = env.get("DECISION_CLICKER_STAR_RESOURCE") or RESOURCE
     margin = float(env.get("DECISION_CLICKER_STAR_MARGIN") or DEFAULT_MARGIN)
+    role = (env.get("DECISION_CLICKER_STAR_ROLE") or "standby").strip().lower()
+    if role not in ("server", "standby"):
+        raise StarUnavailable(f"DECISION_CLICKER_STAR_ROLE={role!r} ist ungueltig (server | standby).")
+    renew_seconds = float(env.get("DECISION_CLICKER_STAR_RENEW") or 40)
     if mode == "local" and eco:
         raise StarUnavailable(
             "LocalStar gilt nur fuer nicht geteilte Ketten; diese Kette ist im Oekosystem "
@@ -149,13 +155,18 @@ def resolve(settings: Settings, env: dict[str, str] | None = None) -> StarConfig
             raise StarUnavailable(
                 "Oekosystem-Kette ohne konfigurierten BACH-Lead (DECISION_CLICKER_LEAD_URL) "
                 "oder Geraete-Token — Kette ist nur lesbar.")
-        return StarConfig("server", resource, worker, host, url, token, margin)
+        return StarConfig("server", resource, worker, host, url, token, margin, role=role,
+                          renew_seconds=renew_seconds)
     key = "local:" + str(Path(settings.chain_dir).resolve())
-    return StarConfig("local", resource, worker, host, margin=margin, chain_key=key)
+    return StarConfig("local", resource, worker, host, margin=margin, chain_key=key, role="server",
+                      renew_seconds=renew_seconds)
 
 
 def describe(settings: Settings) -> dict[str, Any]:
-    """Zustand der Konfiguration fuer Status/UI (ohne Netzzugriff)."""
+    """Zustand fuer Status/UI (ohne Netzzugriff): Dienst-Stern oder Konfiguration."""
+    service = _services.get(str(Path(settings.chain_dir)))
+    if service is not None:
+        return service.status()
     try:
         cfg = resolve(settings)
     except StarUnavailable as exc:
@@ -285,17 +296,22 @@ class ServerStar:
         return Hold(self.cfg.resource, lease_id, fence, (expires - issued).total_seconds(),
                     (expires - now).total_seconds(), sent_mono, sent_wall, margin)
 
-    def acquire(self, version: str | None) -> Hold:
-        status, data, mono, wall = self._request("POST", "", {
+    def acquire(self, version: str | None, rebaseline: bool = False) -> Hold:
+        payload = {
             "worker_id": self.cfg.worker_id, "host": self.cfg.host, "request_id": "req-" + uuid.uuid4().hex,
-            "ttl_profile": TTL_PROFILE, "intent": "decision-clicker", "resource_version": version})
+            "ttl_profile": TTL_PROFILE, "intent": "decision-clicker", "resource_version": version}
+        if rebaseline:
+            payload["rebaseline"] = True
+        status, data, mono, wall = self._request("POST", "", payload)
         if status != 200:
             raise _denied(str(data.get("reason") or f"http_{status}"))
         return self._hold(data, mono, wall)
 
-    def renew(self, hold: Hold, version: str | None = None) -> Hold:
-        status, data, mono, wall = self._request("POST", "/renew", {
-            "lease_id": hold.lease_id, "fence": hold.fence, "resource_version": version})
+    def renew(self, hold: Hold, version: str | None = None, inflight: bool = False) -> Hold:
+        payload = {"lease_id": hold.lease_id, "fence": hold.fence, "resource_version": version}
+        if inflight:
+            payload["inflight"] = True
+        status, data, mono, wall = self._request("POST", "/renew", payload)
         if status != 200:
             raise StarLost(f"Polaris star verloren ({data.get('reason') or status}) — sofort stoppen, "
                            "kein Auto-Revert.")
@@ -321,35 +337,44 @@ class LocalStar:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.path), timeout=10.0)
         conn.execute("CREATE TABLE IF NOT EXISTS local_star (resource TEXT PRIMARY KEY, claim_id TEXT, "
-                     "expires REAL, fence INTEGER NOT NULL DEFAULT 0, resource_version TEXT)")
+                     "expires REAL, fence INTEGER NOT NULL DEFAULT 0, resource_version TEXT, "
+                     "inflight INTEGER NOT NULL DEFAULT 0)")
+        if "inflight" not in {r[1] for r in conn.execute("PRAGMA table_info(local_star)")}:
+            conn.execute("ALTER TABLE local_star ADD COLUMN inflight INTEGER NOT NULL DEFAULT 0")
         conn.commit()
         return conn
 
     def _row(self, conn: sqlite3.Connection) -> tuple:
         conn.execute("INSERT OR IGNORE INTO local_star (resource) VALUES (?)", (self.cfg.chain_key,))
-        return conn.execute("SELECT claim_id, expires, fence, resource_version FROM local_star "
+        return conn.execute("SELECT claim_id, expires, fence, resource_version, inflight FROM local_star "
                             "WHERE resource = ?", (self.cfg.chain_key,)).fetchone()
 
     def _hold(self, claim: str, fence: int, sent_mono: float, sent_wall: float) -> Hold:
         return Hold(self.cfg.resource, claim, fence, LOCAL_TTL, LOCAL_TTL, sent_mono, sent_wall, self.cfg.margin)
 
-    def acquire(self, version: str | None) -> Hold:
+    def acquire(self, version: str | None, rebaseline: bool = False) -> Hold:
         mono, wall = time.monotonic(), time.time()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            claim, expires, fence, stored = self._row(conn)
+            claim, expires, fence, stored, inflight = self._row(conn)
             now = time.time()
             if claim and expires is not None and now < expires:
                 conn.rollback()
                 raise _denied("held")
+            rebased = False
             if stored is not None and version != stored:
-                conn.rollback()
-                raise _denied("stale_resource_version" if version else "resource_version_required")
+                if not (rebaseline and version is not None) or inflight:
+                    conn.rollback()
+                    raise _denied("stale_resource_version" if version else "resource_version_required")
+                rebased = True  # der einzige Host ist die Server-Rolle: externer Edit -> neuer Stand
             new = uuid.uuid4().hex
-            done = conn.execute("UPDATE local_star SET claim_id = ?, expires = ?, fence = fence + 1 "
+            done = conn.execute("UPDATE local_star SET claim_id = ?, expires = ?, fence = fence + 1, "
+                                "resource_version = CASE WHEN ? THEN ? ELSE resource_version END, "
+                                "inflight = CASE WHEN ? THEN 0 ELSE inflight END "
                                 "WHERE resource = ? AND fence = ?",
-                                (new, now + LOCAL_TTL, self.cfg.chain_key, fence))
+                                (new, now + LOCAL_TTL, int(rebased), version, int(rebased),
+                                 self.cfg.chain_key, fence))
             if done.rowcount != 1:
                 conn.rollback()
                 raise _denied("conflict")
@@ -358,19 +383,20 @@ class LocalStar:
         finally:
             conn.close()
 
-    def renew(self, hold: Hold, version: str | None = None) -> Hold:
+    def renew(self, hold: Hold, version: str | None = None, inflight: bool = False) -> Hold:
         mono, wall = time.monotonic(), time.time()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            claim, expires, fence, _stored = self._row(conn)
+            claim, expires, fence, _stored, _flag = self._row(conn)
             now = time.time()
             if claim != hold.lease_id or fence != hold.fence or expires is None or now >= expires:
                 conn.rollback()
                 raise StarLost("Polaris star verloren — sofort stoppen, kein Auto-Revert.")
-            conn.execute("UPDATE local_star SET expires = ?, resource_version = COALESCE(?, resource_version) "
+            conn.execute("UPDATE local_star SET expires = ?, resource_version = COALESCE(?, resource_version), "
+                         "inflight = CASE WHEN ? IS NULL THEN inflight ELSE ? END "
                          "WHERE resource = ? AND claim_id = ? AND fence = ?",
-                         (now + LOCAL_TTL, version, self.cfg.chain_key, claim, fence))
+                         (now + LOCAL_TTL, version, version, int(inflight), self.cfg.chain_key, claim, fence))
             conn.commit()
             return self._hold(claim, fence, mono, wall)
         finally:
@@ -389,7 +415,7 @@ class LocalStar:
     def verify(self, hold: Hold) -> None:
         conn = self._connect()
         try:
-            claim, expires, fence, _stored = self._row(conn)
+            claim, expires, fence, _stored, _flag = self._row(conn)
             conn.commit()
         finally:
             conn.close()
@@ -405,12 +431,24 @@ def make_provider(cfg: StarConfig) -> ServerStar | LocalStar:
 # Transaktion
 # ---------------------------------------------------------------------------
 class Transaction:
-    """Ein erworbener star waehrend einer Kettentransaktion."""
+    """Ein erworbener star waehrend einer Kettentransaktion (eigener Erwerb oder Dienst-Stern)."""
 
-    def __init__(self, settings: Settings, cfg: StarConfig, provider: ServerStar | LocalStar) -> None:
-        self.settings, self.cfg, self.provider = settings, cfg, provider
+    def __init__(self, settings: Settings, cfg: StarConfig, provider: ServerStar | LocalStar,
+                 service: Service | None = None) -> None:
+        self.settings, self.cfg, self.provider, self.service = settings, cfg, provider, service
         self.txid = uuid.uuid4().hex[:8]
-        self.hold: Hold | None = None
+        self._hold: Hold | None = None
+
+    @property
+    def hold(self) -> Hold | None:
+        return self.service.hold if self.service is not None else self._hold
+
+    @hold.setter
+    def hold(self, value: Hold | None) -> None:
+        if self.service is not None:
+            self.service.hold = value
+        else:
+            self._hold = value
 
     @property
     def fence(self) -> int:
@@ -431,37 +469,143 @@ class Transaction:
         elif hold.remaining() < hold.ttl / 2:
             self.hold = self.provider.renew(hold)
 
-    def report(self, version: str) -> None:
+    def report(self, version: str, inflight: bool = False) -> None:
         """Version beim Lead melden (renew) -- Commit-Marker oder In-flight-Marker."""
         assert self.hold is not None
-        self.hold = self.provider.renew(self.hold, version)
+        self.hold = self.provider.renew(self.hold, version, inflight)
 
     def commit_marker(self) -> None:
         """Letzter Schritt einer abgeschlossenen Transaktion: Manifest-Hash per renew melden."""
-        assert self.hold is not None
-        self.hold = self.provider.renew(self.hold, chain_manifest(self.settings))
+        self.report(chain_manifest(self.settings))
 
 
-def _acquire(settings: Settings, provider: ServerStar | LocalStar) -> Hold:
-    """Erwerb mit Sync-Schranke. Nach einem Sternverlust mitten in einer journalisierten
-    Transaktion passt der lokale Stand nicht zum letzten Commit; dann gilt der In-flight-Marker
-    des offenen Journals (gemeldet vom abgestuerzten Halter)."""
+def _acquire(settings: Settings, provider: ServerStar | LocalStar, role: str) -> Hold:
+    """Erwerb mit Sync-Schranke.
+
+    1. lokaler Manifest-Hash; 2. nach Sternverlust in einer journalisierten Transaktion: In-flight-Marker
+    des offenen Journals; 3. nur in der Server-Rolle ``rebaseline`` (externe Aenderung, z. B. angehaengter
+    Agenteneintrag): den lokalen Stand als neue Version melden. Ein offener In-flight-Marker blockiert
+    auch den Server (erst Recovery). Der Standby braucht immer den exakten Abgleich."""
+    local = chain_manifest(settings)
     try:
-        return provider.acquire(chain_manifest(settings))
+        return provider.acquire(local)
     except StarUnavailable as exc:
         if getattr(exc, "reason", None) != "stale_resource_version":
             raise
-        folder = Path(settings.chain_dir) / JOURNAL_DIR
-        for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        stale = exc
+    folder = Path(settings.chain_dir) / JOURNAL_DIR
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            return provider.acquire(inflight_version(path.stem))
+        except StarUnavailable as again:
+            if getattr(again, "reason", None) != "stale_resource_version":
+                raise
+    if role == "server":
+        return provider.acquire(local, rebaseline=True)
+    raise stale
+
+
+# ---------------------------------------------------------------------------
+# Dienstbetrieb: der Stern wird beim Start erworben, erneuert und beim Beenden zurueckgegeben
+# ---------------------------------------------------------------------------
+class Service:
+    """Laufender Dienst (Clicker-Server): haelt den star dauerhaft, alle ``renew_seconds`` erneuert.
+
+    Verliert er ihn, stoppen Schreibaktionen (``StarUnavailable``), der Status zeigt es, und der
+    Heartbeat erwirbt neu (Journal-Wiederaufnahme inklusive). Einmalige CLI-Aufrufe und LocalStar
+    erwerben dagegen pro Transaktion."""
+
+    def __init__(self, settings: Settings, cfg: StarConfig, provider: ServerStar | LocalStar,
+                 recover: Callable[[Transaction], None] | None, mutation_lock) -> None:
+        self.settings, self.cfg, self.provider = settings, cfg, provider
+        self.recover, self.mutation_lock = recover, mutation_lock
+        self.hold: Hold | None = None
+        self.last_error: str | None = None
+        self.lost_count = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._try_acquire()
+        self._thread = threading.Thread(target=self._loop, name="polaris-heartbeat", daemon=True)
+        self._thread.start()
+
+    def _try_acquire(self) -> None:
+        try:
+            with self.mutation_lock:
+                hold = _acquire(self.settings, self.provider, self.cfg.role)
+                self.hold, self.last_error = hold, None
+                if self.recover is not None:
+                    tx = Transaction(self.settings, self.cfg, self.provider, service=self)
+                    registry = _tls.__dict__.setdefault("active", {})
+                    key = str(Path(self.settings.chain_dir))
+                    registry[key] = tx
+                    try:
+                        self.recover(tx)
+                    finally:
+                        registry.pop(key, None)
+        except StarUnavailable as exc:
+            self.last_error = str(exc)
+            if isinstance(exc, StarLost):
+                self.hold = None
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.cfg.renew_seconds):
+            hold = self.hold
+            if hold is not None:
+                try:
+                    self.hold = self.provider.renew(hold)
+                except StarUnavailable as exc:
+                    self.mark_lost(f"Polaris star verloren ({exc})")
+            if self.hold is None:
+                self._try_acquire()
+
+    def mark_lost(self, reason: str) -> None:
+        self.hold = None
+        self.last_error = reason
+        self.lost_count += 1
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        hold, self.hold = self.hold, None
+        if hold is not None:
             try:
-                return provider.acquire(inflight_version(path.stem))
-            except StarUnavailable as again:
-                if getattr(again, "reason", None) != "stale_resource_version":
-                    raise
-        raise
+                hold = self.provider.renew(hold, chain_manifest(self.settings))
+                self.provider.release(hold)
+            except StarUnavailable:
+                pass
+
+    def status(self) -> dict[str, Any]:
+        hold = self.hold
+        return {"available": hold is not None, "kind": self.cfg.kind, "mode": "service",
+                "resource": self.cfg.resource, "worker": self.cfg.worker_id, "held": hold is not None,
+                "fence": hold.fence if hold else None, "lost_count": self.lost_count,
+                "error": self.last_error}
 
 
+_services: dict[str, Service] = {}
 _tls = threading.local()
+
+
+def start_service(settings: Settings, *, recover: Callable[[Transaction], None] | None = None,
+                  mutation_lock=None) -> Service | None:
+    """Dienst-Stern starten (nur ServerStar). Gibt None zurueck, wenn die Kette im Einzelbetrieb laeuft."""
+    cfg = resolve(settings)
+    if cfg.kind != "server":
+        return None
+    key = str(Path(settings.chain_dir))
+    service = Service(settings, cfg, make_provider(cfg), recover, mutation_lock or threading.RLock())
+    _services[key] = service
+    service.start()
+    return service
+
+
+def stop_service(settings: Settings) -> None:
+    service = _services.pop(str(Path(settings.chain_dir)), None)
+    if service is not None:
+        service.stop()
 
 
 def active_transaction(settings: Settings) -> Transaction | None:
@@ -470,29 +614,46 @@ def active_transaction(settings: Settings) -> Transaction | None:
 
 @contextmanager
 def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None] | None = None):
-    """Star erwerben (Sync-Schranke), Block ausfuehren, Commit-Marker melden, zurueckgeben.
+    """Block unter dem Polaris star ausfuehren.
 
-    Verschachtelte Aufrufe nutzen die aeussere Transaktion. Sternverlust
-    (``StarLost``) stoppt ohne Revert; ein offenes Journal bleibt liegen.
-    """
+    Mit laufendem Dienst: dessen gehaltener star wird genutzt, nichts erworben oder zurueckgegeben.
+    Sonst: erwerben (Sync-Schranke), ausfuehren, Commit-Marker melden, zurueckgeben.
+    Verschachtelte Aufrufe nutzen die aeussere Transaktion. Sternverlust (``StarLost``) stoppt ohne
+    Revert; ein offenes Journal bleibt liegen."""
     existing = active_transaction(settings)
     if existing is not None:
         yield existing
         return
-    cfg = resolve(settings)
-    tx = Transaction(settings, cfg, make_provider(cfg))
-    tx.hold = _acquire(settings, tx.provider)
-    registry = _tls.__dict__.setdefault("active", {})
     key = str(Path(settings.chain_dir))
+    registry = _tls.__dict__.setdefault("active", {})
+    service = _services.get(key)
+    if service is not None:
+        if service.hold is None:
+            raise StarUnavailable("Der Dienst hält den Polaris star gerade nicht (Neuerwerb läuft): "
+                                  f"{service.last_error or 'unbekannt'} — Kette ist nur lesbar.")
+        tx = Transaction(settings, service.cfg, service.provider, service=service)
+        registry[key] = tx
+        try:
+            yield tx
+        except StarLost as exc:
+            service.mark_lost(f"Polaris star verloren ({exc})")
+            raise
+        else:
+            tx.commit_marker()
+        finally:
+            registry.pop(key, None)
+        return
+    cfg = resolve(settings)
+    provider = make_provider(cfg)
+    tx = Transaction(settings, cfg, provider)
+    tx.hold = _acquire(settings, provider, cfg.role if cfg.kind == "server" else "server")
     registry[key] = tx
-    lost = False
     try:
         if on_acquired is not None:
             on_acquired(tx)
         yield tx
     except StarLost:
-        lost = True
-        raise
+        raise  # Stern verloren: nichts mehr melden oder freigeben
     except BaseException:
         _finish(tx, quiet=True)
         raise
@@ -500,8 +661,6 @@ def transaction(settings: Settings, *, on_acquired: Callable[[Transaction], None
         _finish(tx, quiet=False)
     finally:
         registry.pop(key, None)
-        if lost:
-            pass  # Stern verloren: nichts mehr melden oder freigeben
 
 
 def _finish(tx: Transaction, *, quiet: bool) -> None:

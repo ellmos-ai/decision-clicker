@@ -488,6 +488,14 @@ def serve(settings: Settings | None = None) -> None:
         print(f"  Offen : {werte['offen']} Entscheidungen warten auf dich")
     except chain.ChainError as exc:
         print(f"  WARNUNG: {exc}")
+    try:
+        service = writer.start_star_service(settings)
+        if service is not None:
+            state = service.status()
+            held = f"star gehalten, Fence {state['fence']}" if state["held"] else "KEIN star"
+            print(f"  Polaris: {held}" + (f" ({state['error']})" if state["error"] else ""))
+    except writer.StarUnavailable as exc:
+        print(f"  Polaris: {exc}")
     print("  Strg+C beendet den Server.")
     print("=" * 52)
     try:
@@ -495,4 +503,5 @@ def serve(settings: Settings | None = None) -> None:
     except KeyboardInterrupt:
         print("\n  Beendet.")
     finally:
+        writer.stop_star_service(settings)
         httpd.server_close()

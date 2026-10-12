@@ -110,6 +110,17 @@ def chain_transaction(settings: Settings):
             yield tx
 
 
+def start_star_service(settings: Settings):
+    """Dienstbetrieb (Clicker-Server): star beim Start erwerben, alle 40 s erneuern, beim Beenden
+    zurueckgeben. Gibt None zurueck, wenn die Kette im Einzelbetrieb (LocalStar) laeuft."""
+    return star.start_service(settings, recover=lambda tx: journal.recover(settings, tx),
+                              mutation_lock=MUTATION_LOCK)
+
+
+def stop_star_service(settings: Settings) -> None:
+    star.stop_service(settings)
+
+
 def _chain_op(function):
     """Jede oeffentliche Kettenoperation laeuft in einer Transaktion (verschachtelt = dieselbe)."""
     @functools.wraps(function)
@@ -908,7 +919,7 @@ def foreign_locks(settings: Settings) -> list[Path]:
 
 
 __all__ = [
-    "StarUnavailable", "chain_transaction",
+    "StarUnavailable", "chain_transaction", "start_star_service", "stop_star_service",
     "ChainError", "MUTATION_LOCK", "WriteError", "append_done", "append_entry", "backup",
     "decide_entry",
     "entry_bounds", "fill_decision", "foreign_locks", "mark_decision_undone",

@@ -54,10 +54,32 @@ weder mit einer ID noch mit einem Feldnamen, steht nie unmittelbar an einem Mehr
 Parser-Ergebnisse nicht (`decisions_index.py`, `decisions_db.py` und die Clicker-Parser liefern identische
 Einträge mit und ohne Stempelzeilen, Aktivvertrag gültig).
 
+## Dienstbetrieb und CLI
+
+* **Dienst** (`decision-clicker serve`, Writer-Kern als laufender Dienst): der star wird beim Start erworben,
+  alle 40 s (`DECISION_CLICKER_STAR_RENEW`) erneuert und beim Beenden zurückgegeben. Der Server-Schreiber
+  bleibt so auch ohne Klick „aktiv“, ein Standby wird abgelehnt (`held`). Verliert der Dienst den star,
+  stoppen Schreibaktionen (HTTP 409), `status()["star"]` zeigt `held: false`, `lost_count` und den Fehler,
+  und der Heartbeat erwirbt neu (inklusive Journal-Wiederaufnahme).
+* **Einmalige CLI-Aufrufe und LocalStar** erwerben den star pro Transaktion.
+
+## Rollen und `rebaseline`
+
+`DECISION_CLICKER_STAR_ROLE` = `standby` (Standard) | `server`. Nur die Server-Rolle (die der Lead aus
+Registrierung und Gerät kennt) darf bei abweichendem Manifest ohne offenen In-flight-Marker per `rebaseline`
+erwerben: externe Änderungen (z. B. direkt angehängte Agenteneinträge) setzen den Stand neu, der Lead
+protokolliert `rebaseline_external_change`. Ein offener In-flight-Marker blockiert auch den Server
+(`inflight_open`, erst Recovery). Der Standby braucht immer den exakten Abgleich. LocalStar (nur ein Host)
+rebaselinet automatisch.
+
+## Nicht geschützt (außerhalb des Ressourcenumfangs)
+
+`_tools/decisions.index.json` und `INDEX-REPORT.md` sind abgeleitete Artefakte; sie werden bei Bedarf
+regeneriert. Konfliktkopien davon (OneDrive) sind harmlos. Ebenso `chain_tools.materialize` (Werkzeugkopien
+in `_tools/`) und die Übernahme-Markierung im Desktop-Postfach (Datei außerhalb der Kette).
+
 ## Bekanntes Restfenster
 
-Bricht der Stern genau zwischen dem Schreiben des Journals und der Meldung des In-flight-Markers ab,
-passt der lokale Stand zu keinem gemeldeten Stand: die Kette bleibt für alle nur lesbar
-(`stale_resource_version`), bis der Operator den Stand an der Authority neu aufsetzt. Gleiches gilt für
-Änderungen an der Kette außerhalb des Writers (Handedit): der Stand wird erst nach einem Rebaseline wieder
-erworben.
+Bricht der star genau zwischen dem Schreiben des Journals und der Meldung des In-flight-Markers ab, kann die
+Server-Rolle per `rebaseline` weiterarbeiten (das Journal wird verworfen, weil nichts geschrieben war); ein
+Standby bleibt bis dahin nur lesbar (`stale_resource_version`).

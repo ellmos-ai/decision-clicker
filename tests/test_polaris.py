@@ -267,11 +267,13 @@ def test_star_loss_between_every_decide_step_keeps_journal_and_next_holder_finis
         assert chain.build_index(case)["active_contract"]["valid"] is True
 
 
-def test_loss_between_journal_write_and_inflight_report_fails_closed(kette, monkeypatch):
+def test_loss_between_journal_write_and_inflight_report_is_rebaselined_by_server_role(kette, monkeypatch):
+    """Frueheres Restfenster: Verlust genau zwischen Journalschreiben und In-flight-Meldung.
+    Die Server-Rolle (hier LocalStar, einziger Host) erwirbt per rebaseline, das Journal wird verworfen."""
     original = star.Transaction.report
     DecisionClicker(kette.chain_dir).decide(first_open(kette)["key"], "A")  # erster Commit setzt einen Stand
 
-    def boom(self, version):
+    def boom(self, version, inflight=False):
         expire_local_claims()
         raise StarLost("injiziert")
 
@@ -279,10 +281,9 @@ def test_loss_between_journal_write_and_inflight_report_fails_closed(kette, monk
     with pytest.raises(StarLost):
         DecisionClicker(kette.chain_dir).decide(first_open(kette)["key"], "A")
     monkeypatch.setattr(star.Transaction, "report", original)
-    before = snapshot(kette)
-    with pytest.raises(StarUnavailable, match="synchronisiert|stale"):
-        DecisionClicker(kette.chain_dir).decide(first_open(kette)["key"], "B")  # bekanntes Restfenster: nur lesbar
-    assert snapshot(kette) == before
+    result = DecisionClicker(kette.chain_dir).decide(first_open(kette)["key"], "B")
+    assert result["ok"]
+    assert not list((kette.chain_dir / star.JOURNAL_DIR).glob("*.json"))
 
 
 def test_restore_loss_is_completed_by_next_holder(kette, monkeypatch):
@@ -456,3 +457,154 @@ def test_http_api_answers_409_without_star_and_still_reads(server, monkeypatch):
     assert status == 409
     assert snapshot(kette) == before
     assert hole(f"{url}/")[0] == 200  # Lesen funktioniert weiter
+
+
+# ---------------------------------------------------------------------------
+# rebaseline (nur Server-Rolle) und Dienstbetrieb
+# ---------------------------------------------------------------------------
+SERVER_WORKER = "decision-writer@mac-studio"
+
+
+@pytest.fixture
+def server_lead(monkeypatch):
+    fake = FakeLead(server_workers={SERVER_WORKER})
+    url = fake.start()
+    monkeypatch.setenv("DECISION_CLICKER_LEAD_URL", url)
+    monkeypatch.setenv("DECISION_CLICKER_DEVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("DECISION_CLICKER_WORKER", SERVER_WORKER)
+    monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "server")
+    yield fake
+    fake.stop()
+
+
+def hand_edit(settings: Settings) -> None:
+    """Ein Agent haengt direkt an TO-DECIDE-USER.txt an (README _DECISIONS)."""
+    path = settings.chain_dir / "TO-DECIDE-USER.txt"
+    path.write_bytes(path.read_bytes() + b"\n<!-- externer Anhang -->\n")
+
+
+def test_external_edit_server_role_rebaselines_standby_stays_exact(kette, server_lead, monkeypatch):
+    dc = DecisionClicker(kette.chain_dir)
+    dc.decide(first_open(kette)["key"], "A")
+    hand_edit(kette)
+    # Standby (gleicher Lead, keine Server-Rolle): exakter Abgleich, nur lesbar, byte-gleich
+    monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "standby")
+    monkeypatch.setenv("DECISION_CLICKER_WORKER", "decision-writer@host-b")
+    before = snapshot(kette)
+    with pytest.raises(StarUnavailable, match="synchronisiert"):
+        dc.create("x", frage="f", optionen=["A — a"])
+    assert snapshot(kette) == before
+    # Server-Rolle: rebaseline, Ereignis protokolliert, Kette laeuft weiter
+    monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "server")
+    monkeypatch.setenv("DECISION_CLICKER_WORKER", SERVER_WORKER)
+    assert dc.create("y", frage="f", optionen=["A — a"])["ok"]
+    assert server_lead.events == ["rebaseline_external_change"]
+    assert server_lead.version == star.chain_manifest(kette)
+
+
+def test_open_inflight_marker_blocks_even_the_server_until_recovery(kette, server_lead):
+    dc = DecisionClicker(kette.chain_dir)
+    dc.decide(first_open(kette)["key"], "A")
+    real = star.Transaction.assert_valid
+    counter = {"n": 0}
+
+    def failing(self, margin=None):
+        counter["n"] += 1
+        if counter["n"] >= 3:
+            server_lead.expire()
+            raise StarLost("injiziert")
+        return real(self, margin)
+
+    star.Transaction.assert_valid = failing
+    try:
+        with pytest.raises(StarLost):
+            dc.decide(first_open(kette)["key"], "B")
+    finally:
+        star.Transaction.assert_valid = real
+    assert server_lead.inflight is True
+    journals = list((kette.chain_dir / star.JOURNAL_DIR).glob("*.json"))
+    assert journals
+    hidden = journals[0].read_bytes()
+    journals[0].unlink()  # Journal (noch) nicht synchron: kein Marker ableitbar
+    hand_edit(kette)
+    with pytest.raises(StarUnavailable) as err:
+        dc.create("z", frage="f", optionen=["A — a"])  # blockiert auch die Server-Rolle
+    assert err.value.reason == "inflight_open"
+    journals[0].write_bytes(hidden)  # Journal ist da: Recovery ueber den In-flight-Marker
+    assert dc.create("z", frage="f", optionen=["A — a"])["ok"]
+    assert server_lead.inflight is False
+
+
+def service_env(monkeypatch, fake: FakeLead) -> None:
+    monkeypatch.setenv("DECISION_CLICKER_LEAD_URL", fake.start())
+    monkeypatch.setenv("DECISION_CLICKER_DEVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("DECISION_CLICKER_WORKER", SERVER_WORKER)
+    monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "server")
+    monkeypatch.setenv("DECISION_CLICKER_STAR_RENEW", "1")
+    monkeypatch.setenv("DECISION_CLICKER_STAR_MARGIN", "0.5")
+
+
+def test_service_holds_star_without_clicks_beyond_server_down_after(kette, monkeypatch):
+    fake = FakeLead(ttl=3, server_workers={SERVER_WORKER})
+    service_env(monkeypatch, fake)
+    try:
+        service = writer.start_star_service(kette)
+        assert service is not None and service.status()["held"] and fake.fence == 1
+        time.sleep(4.5)  # laenger als die TTL: nur der Heartbeat haelt den star
+        assert fake.claim is not None and fake.fence == 1 and service.status()["fence"] == 1
+        # Standby wird abgelehnt, solange der Dienst haelt
+        monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "standby")
+        monkeypatch.setenv("DECISION_CLICKER_WORKER", "decision-writer@host-b")
+        with pytest.raises(StarUnavailable) as err:
+            star.make_provider(star.resolve(kette)).acquire(star.chain_manifest(kette))
+        assert err.value.reason == "held"
+        # eine Transaktion nutzt den gehaltenen star und gibt ihn NICHT zurueck
+        monkeypatch.setenv("DECISION_CLICKER_STAR_ROLE", "server")
+        monkeypatch.setenv("DECISION_CLICKER_WORKER", SERVER_WORKER)
+        assert DecisionClicker(kette.chain_dir).create("s", frage="f", optionen=["A — a"])["ok"]
+        assert fake.claim is not None and fake.fence == 1 and fake.version == star.chain_manifest(kette)
+        assert DecisionClicker(kette.chain_dir).status()["star"]["held"] is True
+    finally:
+        writer.stop_star_service(kette)
+    assert fake.claim is None and fake.version == star.chain_manifest(kette)  # beim Beenden zurueckgegeben
+    fake.stop()
+
+
+def test_service_loss_stops_writes_shows_status_and_reacquires(kette, monkeypatch):
+    fake = FakeLead(ttl=3, server_workers={SERVER_WORKER})
+    service_env(monkeypatch, fake)
+    try:
+        service = writer.start_star_service(kette)
+        assert service is not None and fake.fence == 1
+        fake.reject_acquire = True  # Neuerwerb noch nicht moeglich
+        fake.expire()  # Lease des Dienstes laeuft ab: der naechste Heartbeat verliert den star
+        deadline = time.time() + 20
+        while time.time() < deadline and service.status()["held"]:
+            time.sleep(0.2)
+        status = DecisionClicker(kette.chain_dir).status()["star"]
+        assert status["held"] is False and status["lost_count"] >= 1 and status["error"]
+        before = snapshot(kette)
+        with pytest.raises(StarUnavailable, match="nur lesbar"):
+            DecisionClicker(kette.chain_dir).create("x", frage="f", optionen=["A — a"])
+        assert snapshot(kette) == before
+        fake.reject_acquire = False  # der Heartbeat erwirbt neu
+        deadline = time.time() + 20
+        while time.time() < deadline and not service.status()["held"]:
+            time.sleep(0.2)
+        assert service.status()["held"] and service.status()["fence"] == 2
+        assert DecisionClicker(kette.chain_dir).create("x", frage="f", optionen=["A — a"])["ok"]
+    finally:
+        writer.stop_star_service(kette)
+        fake.stop()
+
+
+#: Gemeinsamer Vektor mit BACH ``tests/test_resource_lease.py`` (lease_core.manifest_version).
+SHARED_MANIFEST_VECTOR = "025c824ad9189e559d0844f99372867f61b3b56b7c8d5e5b6d8266e2b86dea47"
+
+
+def test_manifest_shared_vector_with_bach(tmp_path):
+    (tmp_path / "a.txt").write_bytes(b"x")
+    (tmp_path / "leer").mkdir()  # leerer Ordner == fehlend
+    assert star.manifest_version(tmp_path, ["leer", "b.txt", "a.txt"]) == SHARED_MANIFEST_VECTOR
+    (tmp_path / "leer").rmdir()
+    assert star.manifest_version(tmp_path, ["leer", "b.txt", "a.txt"]) == SHARED_MANIFEST_VECTOR

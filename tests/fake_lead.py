@@ -25,9 +25,15 @@ def _fmt(dt: datetime) -> str:
 
 
 class FakeLead:
-    def __init__(self, resource: str = "decisions-chain", allowed: set[str] | None = None) -> None:
+    def __init__(self, resource: str = "decisions-chain", allowed: set[str] | None = None,
+                 ttl: float = TTL, server_workers: set[str] | None = None) -> None:
         self.resource = resource
         self.allowed = allowed
+        self.ttl = ttl
+        self.server_workers = server_workers or set()  # nur diese duerfen rebaselinen
+        self.inflight = False
+        self.reject_acquire = False  # Test: Neuerwerb voruebergehend verweigern
+        self.events: list[str] = []
         self.skew = timedelta(0)  # verschiebt die Lead-Uhr (Ablauf erzwingen)
         self.fence = 0
         self.claim: dict | None = None
@@ -89,7 +95,7 @@ class FakeLead:
 
     def expire(self) -> None:
         """Lead-Uhr hinter den Ablauf der aktuellen Lease schieben."""
-        self.skew += timedelta(seconds=TTL + 5)
+        self.skew += timedelta(seconds=self.ttl + 5)
 
     def _live(self, now: datetime) -> bool:
         return self.claim is not None and now < self.claim["expires"]
@@ -100,7 +106,8 @@ class FakeLead:
         return {"granted": True, "resource": self.resource, "lease_id": c["id"], "fence": self.fence,
                 "worker_id": c["worker"], "host": c["host"], "issued_at": _fmt(c["issued"]),
                 "expires_at": _fmt(c["expires"]), "ttl_profile": "POLARIS", "server_now": _fmt(now),
-                "resource_version": self.version, "renew_after_seconds": 40, "margin_seconds": 15}
+                "resource_version": self.version, "renew_after_seconds": 40,
+                "margin_seconds": 15 if self.ttl >= 60 else 0.5}
 
     def _deny(self, reason: str, now: datetime, **extra) -> tuple[int, dict]:
         return 409, {"granted": False, "reason": reason, "resource": self.resource, **extra,
@@ -110,7 +117,8 @@ class FakeLead:
         now = self.now()
         if method == "GET":
             payload = {"resource": self.resource, "leased": self._live(now), "fence": self.fence,
-                       "resource_version": self.version, "server_now": _fmt(now)}
+                       "resource_version": self.version, "server_now": _fmt(now),
+                       "version_inflight": self.inflight}
             if self._live(now) and own_id and own_id == self.claim["id"]:
                 payload["own"] = True
             return 200, payload
@@ -118,15 +126,20 @@ class FakeLead:
             worker = body.get("worker_id", "")
             if self.allowed is not None and worker not in self.allowed:
                 return self._deny("device_not_bound", now)
-            if self._live(now):
+            if self._live(now) or self.reject_acquire:
                 return self._deny("held", now)
             if self.version is not None and body.get("resource_version") is None:
                 return self._deny("resource_version_required", now, expected_resource_version=self.version)
             if self.version is not None and body.get("resource_version") != self.version:
-                return self._deny("stale_resource_version", now, expected_resource_version=self.version)
+                if not (body.get("rebaseline") and worker in self.server_workers):
+                    return self._deny("stale_resource_version", now, expected_resource_version=self.version)
+                if self.inflight:
+                    return self._deny("inflight_open", now, expected_resource_version=self.version)
+                self.version, self.inflight = body["resource_version"], False
+                self.events.append("rebaseline_external_change")
             self.fence += 1
             self.claim = {"id": str(uuid.uuid4()), "worker": worker, "host": body.get("host"),
-                          "issued": now, "expires": now + timedelta(seconds=TTL)}
+                          "issued": now, "expires": now + timedelta(seconds=self.ttl)}
             return 200, self._ack(now)
         holder = self.claim
         if holder is None or body.get("lease_id") != holder["id"] or body.get("fence") != self.fence:
@@ -134,13 +147,13 @@ class FakeLead:
         if suffix == "/renew":
             if not self._live(now):
                 return self._deny("expired", now)
-            holder["expires"] = now + timedelta(seconds=TTL)
+            holder["expires"] = now + timedelta(seconds=self.ttl)
             if body.get("resource_version"):
-                self.version = body["resource_version"]
+                self.version, self.inflight = body["resource_version"], bool(body.get("inflight"))
             return 200, self._ack(now)
         if suffix == "/release":
             if body.get("resource_version") and self._live(now):
-                self.version = body["resource_version"]
+                self.version, self.inflight = body["resource_version"], False
             self.claim = None
             return 200, {"released": True, "resource": self.resource, "fence": self.fence,
                          "late": False, "resource_version": self.version, "server_now": _fmt(now)}

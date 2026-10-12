@@ -53,7 +53,7 @@ class Journal:
         }
         journal = cls(settings, data)
         journal._store()
-        tx.report(inflight_version(tx.txid))  # ab hier erwirbt der Nachfolger ueber das Journal
+        tx.report(inflight_version(tx.txid), inflight=True)  # ab hier erwirbt der Nachfolger ueber das Journal
         return journal
 
     def _store(self) -> None:
