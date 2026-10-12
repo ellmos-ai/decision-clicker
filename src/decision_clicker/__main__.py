@@ -64,7 +64,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     """Dritter Einstellweg neben UI-Formular und HTTP-API — dasselbe Ziel."""
     settings = _einstellungen(args)
-    with writer.MUTATION_LOCK:
+    with writer.chain_transaction(settings):
         if fremde := writer.foreign_locks(settings):
             print(f"ABBRUCH: fremde Sperre {[p.name for p in fremde]}", file=sys.stderr)
             return 3
@@ -96,7 +96,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_intake(args: argparse.Namespace) -> int:
     settings = _einstellungen(args)
-    with writer.MUTATION_LOCK:
+    with writer.chain_transaction(settings):
         ergebnis = intake.takeover(settings, dry_run=args.dry_run)
     if not ergebnis:
         print("Desktop-Postfach: nichts zu übernehmen.")
@@ -148,6 +148,28 @@ def cmd_chain_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_polaris_journal(args: argparse.Namespace) -> int:
+    """Operatorpfad gegen den Dauerblock durch ein Journal (docs/POLARIS.md). list/show lesen nur."""
+    from . import journal
+    settings = _einstellungen(args)
+    if args.jcmd == "list":
+        rows = journal.describe(settings)
+        for row in rows:
+            state = (f"{row['op']} {row['entry_id']} {len(row['done'])}/{len(row['steps'])}" if row["valid"]
+                     else f"BESCHAEDIGT ({row['error']})")
+            print(f"{row['tx']}  {state}")
+        if not rows:
+            print("Keine offenen Journale.")
+        return 0
+    if args.jcmd == "show":
+        print(json.dumps(journal.show(settings, args.tx), ensure_ascii=False, indent=2))
+        return 0
+    decision = "keep-current" if args.keep_current else "restore-before"
+    line = journal.resolve(settings, args.tx, decision, args.operator)
+    print(json.dumps(line, ensure_ascii=False))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     _configure_utf8_output()
@@ -190,6 +212,24 @@ def main(argv: list[str] | None = None) -> int:
                       help="abweichende Dateien ueberschreiben")
     _gemeinsam(p_ct)
     p_ct.set_defaults(func=cmd_chain_tools)
+
+    p_pol = unter.add_parser("polaris", help="Polaris star: Betrieb und Operatorpfad")
+    pol = p_pol.add_subparsers(dest="polcmd", required=True)
+    p_jr = pol.add_parser("journal", help="offene Transaktionsjournale ansehen und gesichert aufloesen")
+    jr = p_jr.add_subparsers(dest="jcmd", required=True)
+    for name in ("list", "show", "resolve"):
+        sub = jr.add_parser(name)
+        if name != "list":
+            sub.add_argument("tx", help="Transaktions-ID des Journals")
+        if name == "resolve":
+            group = sub.add_mutually_exclusive_group(required=True)
+            group.add_argument("--keep-current", action="store_true",
+                               help="Kette so lassen, wie sie ist (vom Operator geprueft)")
+            group.add_argument("--restore-before", action="store_true",
+                               help="Kettendateien aus Sicherungen mit dem Vorher-Hash zurueckholen")
+            sub.add_argument("--operator", help="Name fuer die Logzeile (Standard: Benutzername)")
+        _gemeinsam(sub)
+        sub.set_defaults(func=cmd_polaris_journal)
 
     args = parser.parse_args(argv)
     # Das globale --check ("nur Kette pruefen") gilt nur OHNE Subkommando. Sonst

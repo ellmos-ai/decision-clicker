@@ -10,14 +10,22 @@ kontrollierte Migrationen verfügbar.
 from __future__ import annotations
 
 import base64
+import contextlib
+import functools
+import hashlib
+import os
 import re
 import shutil
+import stat
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
+from . import journal, star
 from .chain import DONE_HEADING_RE, ChainError, _load_index_tool
 from .config import Settings
+from .errors import StarUnavailable, WriteError
 
 DECISION_FIELD_RE = re.compile(r"^(\s*ENTSCHEIDUNG\s+DES\s+USERS\b[^:]*:)(.*)$", re.I)
 DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:", re.I)
@@ -33,10 +41,6 @@ MUTATION_LOCK = threading.RLock()
 ENTRY_ID_RE = re.compile(r"^D-\d{8}-\d{2,4}(?:-[A-Za-z0-9]+)*$")
 LINE_BREAK_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
 CONTEXT_FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-
-
-class WriteError(RuntimeError):
-    """Der Schreibvorgang wurde abgebrochen — die Datei ist unveraendert."""
 
 
 def single_line(value: str, field: str) -> str:
@@ -62,11 +66,151 @@ def _read(path: Path) -> tuple[str, bool]:
     return raw.decode("utf-8-sig"), has_bom
 
 
-def _write(path: Path, text: str, has_bom: bool) -> None:
+_REPARSE_LINK_TAGS = (0xA000000C, 0xA0000003)  # Windows: Symlink, Junction (Cloud-Platzhalter sind keine Links)
+
+
+def _is_link(path: Path) -> bool:
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) in _REPARSE_LINK_TAGS
+
+
+def _lexical(path: Path | str) -> Path:
+    return Path(os.path.normcase(os.path.abspath(path)))
+
+
+def _in_chain(settings: Settings, path: Path) -> bool:
+    """Liegt ``path`` im Ressourcenumfang (Kettenordner)? Backups liegen nie darin. Zaehlt der
+    unaufgeloeste ODER der aufgeloeste Pfad als drin, gilt er als drin (ein Link ist kein Ausweg)."""
+    for here, base in ((_lexical(path), _lexical(settings.chain_dir)),
+                       (Path(path).resolve(), Path(settings.chain_dir).resolve())):
+        try:
+            here.relative_to(base)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _reject_links(settings: Settings, path: Path) -> None:
+    """Symlink oder Junction in irgendeiner Komponente unterhalb des Kettenordners: kein Durchlass."""
+    base = _lexical(settings.chain_dir)
+    try:
+        parts = _lexical(path).relative_to(base).parts
+    except ValueError:
+        raise WriteError(f"{Path(path).name}: erreicht die Kette ueber einen Link — abgelehnt.") from None
+    current = Path(os.path.abspath(settings.chain_dir))
+    for part in parts:
+        current = current / part
+        if _is_link(current):
+            raise WriteError(f"{current.name}: Symlink oder Junction im Kettenumfang — abgelehnt.")
+
+
+def _guard(settings: Settings, path: Path) -> None:
+    """CHOKE-POINT (Polaris): jede Schreib- oder Loeschaktion im Kettenordner prueft hier
+    den Stern -- ausschliesslich hier. Ohne gueltigen star: ``StarUnavailable`` (nur lesbar)."""
+    if not _in_chain(settings, path):
+        return
+    _reject_links(settings, path)
+    tx = star.active_transaction(settings)
+    if tx is None:
+        raise StarUnavailable("Kein Polaris star: Kette ist nur lesbar.")
+    tx.assert_valid()
+
+
+#: Wiederholungen bei OneDrive-Sharing-Verletzungen (PermissionError/OSError), zusammen unter 3 s.
+_RETRY_PAUSES = (0.05, 0.1, 0.2, 0.4, 0.8)
+
+
+def _retry(action):
+    for pause in (*_RETRY_PAUSES, None):
+        try:
+            return action()
+        except FileNotFoundError:
+            raise
+        except OSError:
+            if pause is None:
+                raise
+            time.sleep(pause)
+
+
+def _write(settings: Settings, path: Path, text: str, has_bom: bool) -> None:
+    """Atomar: tmp im selben Ordner, dann ``os.replace`` (tmp-Namen zaehlen nicht zum Manifest)."""
+    _guard(settings, path)
     data = text.encode("utf-8")
     if has_bom:
         data = b"\xef\xbb\xbf" + data
-    path.write_bytes(data)
+    if _in_chain(settings, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tx = star.active_transaction(settings)
+        if tx is not None and tx.journal is not None and _lexical(path) == _lexical(
+                Path(settings.chain_dir) / path.name):
+            tx.journal.intend(path.name, hashlib.sha256(data).hexdigest())  # Hash VOR dem Schreiben vermerken
+    tx = star.active_transaction(settings)
+    tag = (f"{tx.txid}-{os.urandom(4).hex()}@{star.worker_tag(tx.cfg)}" if tx is not None
+           else f"none-{os.urandom(4).hex()}@-")
+    tmp = path.with_name(f"{path.name}.{tag}{star.TMP_SUFFIX}")
+    try:
+        with tmp.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _retry(lambda: os.replace(tmp, path))
+    except BaseException:
+        try:
+            _retry(lambda: tmp.unlink(missing_ok=True))
+        except OSError:
+            pass  # bleibt liegen; der naechste Erwerb raeumt eigene tmp-Dateien abgeschlossener Transaktionen auf
+        raise
+
+
+def _unlink(settings: Settings, path: Path) -> bool:
+    _guard(settings, path)
+    if Path(path).is_file():
+        Path(path).unlink()
+        return True
+    return False
+
+
+@contextlib.contextmanager
+def chain_transaction(settings: Settings):
+    """Star erwerben (Sync-Schranke, Journal-Wiederaufnahme) und bis zum Ende halten.
+
+    ``MUTATION_LOCK`` liegt immer aussen (eine feste Sperrreihenfolge)."""
+    with MUTATION_LOCK:
+        with star.transaction(settings, on_acquired=lambda tx: journal.recover(settings, tx)) as tx:
+            yield tx
+
+
+def start_star_service(settings: Settings):
+    """Dienstbetrieb (Clicker-Server): star beim Start erwerben, alle 40 s erneuern, beim Beenden
+    zurueckgeben. Gibt None zurueck, wenn die Kette im Einzelbetrieb (LocalStar) laeuft."""
+    return star.start_service(settings, recover=lambda tx: journal.recover(settings, tx),
+                              mutation_lock=MUTATION_LOCK)
+
+
+def stop_star_service(settings: Settings) -> None:
+    star.stop_service(settings)
+
+
+def _chain_op(function):
+    """Jede oeffentliche Kettenoperation laeuft in einer Transaktion (verschachtelt = dieselbe)."""
+    @functools.wraps(function)
+    def wrapper(settings, *args, **kwargs):
+        with chain_transaction(settings):
+            return function(settings, *args, **kwargs)
+    return wrapper
+
+
+def _stamp(settings: Settings, override: str | None = None) -> str:
+    if override:
+        return override
+    tx = star.active_transaction(settings)
+    if tx is None:  # nur aus _chain_op-Funktionen erreichbar
+        raise StarUnavailable("Kein Polaris star: Kette ist nur lesbar.")
+    return tx.stamp()
 
 
 def _newline_of(lines: list[str], fallback: str = "\r\n") -> str:
@@ -121,6 +265,7 @@ def render_decision(choice: str, note: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Kernoperation
 # ---------------------------------------------------------------------------
+@_chain_op
 def fill_decision(
     settings: Settings,
     path: Path,
@@ -188,7 +333,7 @@ def fill_decision(
     if not any(DECIDED_AT_RE.match(line) for line in lines[start:end]):
         lines[insert_at:insert_at] = [newline, f"ENTSCHIEDEN AM: {stamp} ({TOOL_TAG}){newline}"]
 
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {
         "file": str(path),
         "line": field_index + 1,
@@ -201,6 +346,7 @@ def fill_decision(
 # ---------------------------------------------------------------------------
 # Rueckgaengig — die genaue Umkehrung von `fill_decision` + `append_done`
 # ---------------------------------------------------------------------------
+@_chain_op
 def revert_decision(
     settings: Settings,
     path: Path,
@@ -272,7 +418,7 @@ def revert_decision(
     lines[field_index] = f"{label} {PLACEHOLDER}{ending}"
     del lines[field_index + 1:field_index + 3]
 
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {
         "file": str(path),
         "line": field_index + 1,
@@ -280,6 +426,7 @@ def revert_decision(
     }
 
 
+@_chain_op
 def remove_entry(
     settings: Settings,
     path: Path,
@@ -302,13 +449,14 @@ def remove_entry(
         )
     backup_path = backup(path, settings, tag="remove") if make_backup else None
     del lines[start:end]
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {
         "file": str(path), "line": start_line,
         "backup": str(backup_path) if backup_path else None,
     }
 
 
+@_chain_op
 def mark_decision_undone(
     settings: Settings,
     entry_id: str,
@@ -316,6 +464,7 @@ def mark_decision_undone(
     *,
     on: str | None = None,
     make_backup: bool = True,
+    stamp: str | None = None,
 ) -> dict:
     """Append-only-Vermerk in `DECIDED-AND-DONE.md`: Entscheidung zurückgesetzt.
 
@@ -358,11 +507,11 @@ def mark_decision_undone(
     while einfuegen > start + 1 and lines[einfuegen - 1].strip() == "":
         einfuegen -= 1
 
-    stamp = on or datetime.now().strftime("%Y-%m-%d")
-    marker = f"ZURÜCKGESETZT AM: {stamp} ({reason}) — Entscheidung wieder offen"
+    marker = (f"ZURÜCKGESETZT AM: {on or datetime.now().strftime('%Y-%m-%d')} ({reason}) "
+              f"— Entscheidung wieder offen — {_stamp(settings, stamp)}")
     backup_path = backup(path, settings, tag="undo") if make_backup else None
     lines[einfuegen:einfuegen] = [f"{marker}{newline}"]
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {"file": str(path), "backup": str(backup_path) if backup_path else None}
 
 
@@ -469,6 +618,7 @@ def render_entry(
     return newline.join(rows) + newline
 
 
+@_chain_op
 def append_entry(
     settings: Settings,
     path: Path,
@@ -476,8 +626,13 @@ def append_entry(
     *,
     make_backup: bool = True,
     preserve_rendered_newlines: bool = False,
+    stamp: bool = True,
 ) -> dict:
-    """Eintrag am Ende des Aktivdokuments anhängen — vor einem Legacy-Pointer."""
+    """Eintrag am Ende des Aktivdokuments anhängen — vor einem Legacy-Pointer.
+
+    Neue Einträge tragen den Fence-Stempel als eigene Zeile direkt unter der
+    Überschrift (ein Feld-Parser ignoriert sie: kein aktives Feld, keine Überschrift).
+    Ein Restore (``stamp=False``) stellt den Originalblock Byte für Byte wieder her."""
     text, has_bom = _read(path)
     lines = text.splitlines(keepends=True)
     newline = _newline_of(lines)
@@ -508,9 +663,12 @@ def append_entry(
         if preserve_rendered_newlines
         else rendered.replace("\r\n", "\n").replace("\n", newline)
     )
+    if stamp:
+        head, sep, rest = block.partition(newline if newline in block else "\n")
+        block = f"{head}{sep or newline}{_stamp(settings)}{sep or newline}{rest}"
     prefix = "" if insert_at == 0 or lines[insert_at - 1].strip() == "" else newline
     lines.insert(insert_at, prefix + block)
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {
         "file": str(path),
         "line": insert_at + 1,
@@ -521,6 +679,7 @@ def append_entry(
 # ---------------------------------------------------------------------------
 # Register
 # ---------------------------------------------------------------------------
+@_chain_op
 def append_done(
     settings: Settings,
     entry: dict,
@@ -530,6 +689,7 @@ def append_done(
     on: str | None = None,
     make_backup: bool = True,
     original_block: str = "",
+    stamp: str | None = None,
 ) -> dict:
     """Getroffene Entscheidung in `DECIDED-AND-DONE.md` protokollieren.
 
@@ -543,17 +703,19 @@ def append_done(
     text, has_bom = _read(path)
     lines = text.splitlines(keepends=True)
     newline = _newline_of(lines)
-    stamp = on or datetime.now().strftime("%Y-%m-%d")
+    day = on or datetime.now().strftime("%Y-%m-%d")
 
     rows = [
         "",
         f"## {entry['id']} — {entry['title']}",
         "",
-        f"ENTSCHIEDEN AM: {stamp} ({TOOL_TAG})",
+        f"ENTSCHIEDEN AM: {day} ({TOOL_TAG})",
         f"ENTSCHEIDUNG: {render_decision(choice, note)}",
         f"QUELLE IN DER KETTE: `{entry['source_file']}`, Zeile {entry['source_line']}",
         "AKTIVVORLAGE: entfernt — beantwortete Punkte sind nicht mehr aktiv.",
         "UMSETZUNG: separat zu verfolgen; ein offener Umsetzungsstand reaktiviert die Frage nicht.",
+        "",
+        _stamp(settings, stamp),
         "",
     ]
     if original_block:
@@ -561,10 +723,11 @@ def append_done(
         rows += [f"ORIGINALBLOCK-BASE64: {encoded}", ""]
     backup_path = backup(path, settings, tag="done") if make_backup else None
     tail = "" if text.endswith(("\n", "\r")) else newline
-    _write(path, text + tail + newline.join(rows) + newline, has_bom)
+    _write(settings, path, text + tail + newline.join(rows) + newline, has_bom)
     return {"file": str(path), "backup": str(backup_path) if backup_path else None}
 
 
+@_chain_op
 def decide_entry(
     settings: Settings,
     entry: dict,
@@ -573,7 +736,13 @@ def decide_entry(
     *,
     on: str | None = None,
 ) -> dict:
-    """Antwort protokollieren und den Vollblock sofort aus Aktiv entfernen."""
+    """Antwort protokollieren und den Vollblock sofort aus Aktiv entfernen.
+
+    Mehrdatei-Transaktion mit Journal: Plan und Fortschritt stehen VOR bzw.
+    NACH jedem Schritt im Journal. Geht der Stern verloren (``StarLost``),
+    wird gestoppt: kein Auto-Revert, das Journal bleibt fuer den naechsten
+    Halter liegen. Andere Fehler werden wie bisher zurueckgerollt.
+    """
     if entry.get("decision_ready") is not True:
         raise WriteError(f"{entry.get('key', entry.get('id', '?'))} ist nicht entscheidungsreif aktiv.")
     path = Path(entry["source_path"])
@@ -581,30 +750,53 @@ def decide_entry(
     lines = text.splitlines(keepends=True)
     start, end = entry_bounds(settings, lines, entry["source_line"])
     original_block = "".join(lines[start:end])
+    tx = star.active_transaction(settings)
+    day = on or datetime.now().strftime("%Y-%m-%d")
 
-    filled = fill_decision(
-        settings, path, entry["source_line"], choice, note,
-        expected_id=entry["id"], on=on)
+    log = journal.Journal.begin(settings, tx, "decide", entry["id"], ["fill", "done", "remove"], {
+        "choice": choice, "note": note, "on": day, "title": entry["title"],
+        "source_file": entry["source_file"], "source_line": entry["source_line"],
+        "source_name": path.name, "original_block_b64": journal.encode_block(original_block)})
     try:
-        record = append_done(
-            settings, entry, choice, note, on=on, original_block=original_block)
+        filled = fill_decision(
+            settings, path, entry["source_line"], choice, note,
+            expected_id=entry["id"], on=day)
+        log.advance("fill")
+        try:
+            record = append_done(
+                settings, entry, choice, note, on=day, original_block=original_block)
+        except StarUnavailable:
+            raise
+        except Exception:
+            revert_decision(
+                settings, path, entry["source_line"], expected_id=entry["id"],
+                make_backup=False)
+            log.mark_aborted()
+            raise
+        log.advance("done")
+        try:
+            removed = remove_entry(
+                settings, path, entry["source_line"], expected_id=entry["id"],
+                make_backup=False)
+        except StarUnavailable:
+            raise
+        except Exception:
+            revert_decision(
+                settings, path, entry["source_line"], expected_id=entry["id"],
+                make_backup=False)
+            mark_decision_undone(
+                settings, entry["id"], "Transaktion abgebrochen", on=day,
+                make_backup=False)
+            log.mark_aborted()
+            raise
+        log.advance("remove")
+    except StarUnavailable:
+        raise  # Journal bleibt liegen, kein Revert
     except Exception:
-        revert_decision(
-            settings, path, entry["source_line"], expected_id=entry["id"],
-            make_backup=False)
+        log.close_if_proven()  # nur wenn die Kette nachweislich vorher/zurueckgerollt ist, sonst bleibt es
         raise
-    try:
-        removed = remove_entry(
-            settings, path, entry["source_line"], expected_id=entry["id"],
-            make_backup=False)
-    except Exception:
-        revert_decision(
-            settings, path, entry["source_line"], expected_id=entry["id"],
-            make_backup=False)
-        mark_decision_undone(
-            settings, entry["id"], "Transaktion abgebrochen", on=on,
-            make_backup=False)
-        raise
+    tx.commit_marker(ignore=log.data["txid"], required=True)  # R29-1: erst melden; sonst bleibt das Journal
+    log.close()
     return {
         "ok": True, "id": entry["id"], "value": filled["value"],
         "date": filled["date"], "file": filled["file"], "line": filled["line"],
@@ -647,6 +839,7 @@ def _restorable_original_block(settings: Settings, entry_id: str) -> str:
     return candidate
 
 
+@_chain_op
 def restore_decision(
     settings: Settings,
     entry_id: str,
@@ -655,7 +848,7 @@ def restore_decision(
     on: str | None = None,
     make_backup: bool = True,
 ) -> dict:
-    """Einen archivierten Clicker-Vollblock wieder als offen aktivieren."""
+    """Einen archivierten Clicker-Vollblock wieder als offen aktivieren (journalisiert)."""
     entry_id = single_line(entry_id, "ID")
     if not ENTRY_ID_RE.fullmatch(entry_id):
         raise WriteError(f"Ungültige Entscheidungs-ID: {entry_id!r}")
@@ -672,28 +865,46 @@ def restore_decision(
     target = settings.chain_dir / "TO-DECIDE-USER.txt"
     if not target.is_file():
         raise WriteError(f"Kanonisches Aktivdokument fehlt: {target}")
-    active_backup = backup(target, settings, tag="undo") if make_backup else None
-    done_backup = backup(settings.done_file, settings, tag="undo") if make_backup else None
-    restored = append_entry(
-        settings, target, original_block, make_backup=False,
-        preserve_rendered_newlines=True)
+    day = on or datetime.now().strftime("%Y-%m-%d")
+    tx = star.active_transaction(settings)
+    log = journal.Journal.begin(settings, tx, "restore", entry_id, ["restore", "mark"], {
+        "reason": reason, "on": day, "original_block_b64": journal.encode_block(original_block)})
     try:
-        marker = mark_decision_undone(
-            settings, entry_id, reason, on=on, make_backup=False)
+        active_backup = backup(target, settings, tag="undo") if make_backup else None
+        done_backup = backup(settings.done_file, settings, tag="undo") if make_backup else None
+        restored = append_entry(
+            settings, target, original_block, make_backup=False,
+            preserve_rendered_newlines=True, stamp=False)
+        log.advance("restore")
+        try:
+            marker = mark_decision_undone(
+                settings, entry_id, reason, on=day, make_backup=False)
+        except StarUnavailable:
+            raise
+        except Exception:
+            fresh = tool.build_index(settings.chain_dir)
+            active = next(
+                item for item in fresh["entries"]
+                if item["domain"] == "active" and item["id"] == entry_id)
+            remove_entry(
+                settings, target, active["source_line"], expected_id=entry_id,
+                make_backup=False)
+            log.mark_aborted()
+            raise
+        log.advance("mark")
+    except StarUnavailable:
+        raise  # Journal bleibt liegen, kein Revert
     except Exception:
-        fresh = tool.build_index(settings.chain_dir)
-        active = next(
-            item for item in fresh["entries"]
-            if item["domain"] == "active" and item["id"] == entry_id)
-        remove_entry(
-            settings, target, active["source_line"], expected_id=entry_id,
-            make_backup=False)
+        log.close_if_proven()
         raise
+    tx.commit_marker(ignore=log.data["txid"], required=True)
+    log.close()
     restored["backup"] = str(active_backup) if active_backup else None
     marker["backup"] = str(done_backup) if done_backup else None
     return {"ok": True, "id": entry_id, "kette": restored, "beleg": marker}
 
 
+@_chain_op
 def append_done_block(settings: Settings, rows: list[str], *, make_backup: bool = True) -> dict:
     """Fertigen Textblock an `DECIDED-AND-DONE.md` anhängen."""
     path = settings.done_file
@@ -703,7 +914,11 @@ def append_done_block(settings: Settings, rows: list[str], *, make_backup: bool 
     newline = _newline_of(text.splitlines(keepends=True))
     backup_path = backup(path, settings, tag="intake") if make_backup else None
     tail = "" if text.endswith(("\n", "\r")) else newline
-    _write(path, text + tail + newline.join(rows) + newline, has_bom)
+    rows = list(rows)
+    heading = next((i for i, row in enumerate(rows) if row.startswith("## ")), None)
+    if heading is not None:
+        rows[heading + 1:heading + 1] = ["", _stamp(settings)]
+    _write(settings, path, text + tail + newline.join(rows) + newline, has_bom)
     return {"file": str(path), "backup": str(backup_path) if backup_path else None}
 
 
@@ -739,7 +954,7 @@ def mark_taken_over(
 
     backup_path = backup(path, settings, tag="intake-mark") if make_backup else None
     lines[einfuegen:einfuegen] = [newline, f"{marker}{newline}"]
-    _write(path, "".join(lines), has_bom)
+    _write(settings, path, "".join(lines), has_bom)
     return {
         "file": str(path),
         "line": einfuegen + 2,
@@ -750,10 +965,11 @@ def mark_taken_over(
 # ---------------------------------------------------------------------------
 # Sperre
 # ---------------------------------------------------------------------------
+@_chain_op
 def write_lock(settings: Settings, purpose: str, hours: int = 24) -> Path:
     path = settings.lock_file
     now = datetime.now()
-    path.write_text(
+    _write(settings, path,
         "\n".join([
             "LOCK — decision-clicker",
             "AGENT: decision-clicker",
@@ -763,16 +979,14 @@ def write_lock(settings: Settings, purpose: str, hours: int = 24) -> Path:
             "SCOPE: _DECISIONS (Kettendateien + DECIDED-AND-DONE.md)",
             "",
         ]),
-        encoding="utf-8",
+        False,
     )
     return path
 
 
+@_chain_op
 def release_lock(settings: Settings) -> bool:
-    if settings.lock_file.is_file():
-        settings.lock_file.unlink()
-        return True
-    return False
+    return _unlink(settings, settings.lock_file)
 
 
 def foreign_locks(settings: Settings) -> list[Path]:
@@ -784,6 +998,7 @@ def foreign_locks(settings: Settings) -> list[Path]:
 
 
 __all__ = [
+    "StarUnavailable", "chain_transaction", "start_star_service", "stop_star_service",
     "ChainError", "MUTATION_LOCK", "WriteError", "append_done", "append_entry", "backup",
     "decide_entry",
     "entry_bounds", "fill_decision", "foreign_locks", "mark_decision_undone",
