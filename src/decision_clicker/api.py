@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import chain, intake, ui, writer
+from . import chain, intake, star, ui, writer
 from .config import Settings, load
 
 __all__ = ["DecisionClicker", "ProposalSubmitter", "ChainError", "WriteError"]
@@ -42,7 +42,7 @@ def _submit_proposal(
     kontext_fingerprint: str = "",
 ) -> dict:
     """Nur einen offenen Vorschlag schreiben; keine Antwort-/Done-Fähigkeit."""
-    with writer.MUTATION_LOCK:
+    with writer.chain_transaction(settings):
         fremde = writer.foreign_locks(settings)
         if fremde:
             raise WriteError(
@@ -115,6 +115,7 @@ class DecisionClicker:
             "target_file": chain.target_part(self.settings).name,
             "intake_pending": len(self.intake_pending()),
             "foreign_locks": [p.name for p in writer.foreign_locks(self.settings)],
+            "star": star.describe(self.settings),
         }
 
     def open_entries(self) -> list[dict]:
@@ -170,7 +171,7 @@ class DecisionClicker:
 
     def decide(self, key: str, choice: str, note: str = "") -> dict:
         """Entscheidung belegen und sofort aus der Aktivvorlage entfernen."""
-        with writer.MUTATION_LOCK:
+        with writer.chain_transaction(self.settings):
             self._guard()
             if not (choice or "").strip():
                 raise WriteError("Ohne Auswahl wird nichts eingetragen.")
@@ -202,7 +203,7 @@ class DecisionClicker:
         der urspruengliche Beleg bleibt stehen und bekommt zusaetzlich einen
         ZURUECKGESETZT-Vermerk.
         """
-        with writer.MUTATION_LOCK:
+        with writer.chain_transaction(self.settings):
             self._guard()
             entry = next(
                 (item for item in chain.clicker_history(self.settings)
@@ -241,7 +242,7 @@ class DecisionClicker:
             return []
 
     def intake_apply(self) -> list[dict]:
-        with writer.MUTATION_LOCK:
+        with writer.chain_transaction(self.settings):
             self._guard()
             return intake.takeover(self.settings)
 

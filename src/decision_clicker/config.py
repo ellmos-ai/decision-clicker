@@ -7,6 +7,7 @@ keinen Benutzer- oder Hostnamen.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 from dataclasses import dataclass
@@ -63,6 +64,11 @@ def default_onedrive_chain() -> Path:
 
 DEFAULT_CHAIN = default_onedrive_chain()
 
+
+def state_dir() -> Path:
+    """Nutzerordner ausserhalb der Kette (Backups, LocalStar-Datenbank)."""
+    return Path(os.environ.get("DECISION_CLICKER_STATE_DIR") or Path.home() / ".decision-clicker")
+
 # Ab dieser Länge warnt die Oberfläche vor einer Bestandsbereinigung. Der
 # Ein-Dokument-Aktivvertrag erlaubt dennoch keinen nummerierten Folgeteil.
 ACTIVE_DOCUMENT_WARNING_LINES = 900
@@ -73,6 +79,7 @@ class Settings:
     chain_dir: Path
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
+    backup_root: Path | None = None
 
     @property
     def tools_dir(self) -> Path:
@@ -92,7 +99,11 @@ class Settings:
 
     @property
     def backup_dir(self) -> Path:
-        return self.archive_dir / "_bak"
+        """Sicherungen landen NIE im Kettenordner (Polaris: Backups sind keine Kettenmutation)."""
+        if self.backup_root is not None:
+            return self.backup_root
+        key = hashlib.sha256(str(Path(self.chain_dir)).encode("utf-8")).hexdigest()[:12]
+        return state_dir() / "backups" / key
 
     @property
     def lock_file(self) -> Path:

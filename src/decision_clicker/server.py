@@ -6,6 +6,7 @@ Sicherung an und prueft auf fremde Sperren im Kettenordner.
 """
 from __future__ import annotations
 
+import functools
 import json
 import secrets
 import time
@@ -20,6 +21,15 @@ from .config import Settings, is_loopback_host, load
 
 MAX_BODY = 256 * 1024
 JSON_WRITE_HEADER = "X-Decision-Clicker"
+
+
+def _in_chain(method):
+    """Kettenschreibende Handler laufen in einer Polaris-Transaktion (Index nach dem Erwerb lesen)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with writer.chain_transaction(self.settings):
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class RequestRejected(writer.WriteError):
@@ -341,6 +351,7 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._send(ui.meldung("Fehler", traceback.format_exc(limit=3), "/", "Übersicht"), 500)
 
+    @_in_chain
     def _decide(self, form: dict[str, str]) -> None:
         if blocker := self._guard():
             raise writer.WriteError(blocker)
@@ -380,6 +391,7 @@ class Handler(BaseHTTPRequestHandler):
                 entry["id"], entry["title"], choice, note, rest, undo_confirmation
             ))
 
+    @_in_chain
     def _undo(self, key: str) -> None:
         if blocker := self._guard():
             raise writer.WriteError(blocker)
@@ -404,6 +416,7 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  ZURÜCKGESETZT {key}")
         self._antwort(f"/klick?{urlencode({'key': key})}", {"ok": True, "id": key, **ergebnis})
 
+    @_in_chain
     def _new(self, form: dict[str, str]) -> None:
         if blocker := self._guard():
             raise writer.WriteError(blocker)
@@ -441,6 +454,7 @@ class Handler(BaseHTTPRequestHandler):
         self._antwort(f"/klick?{urlencode({'key': entry_id})}",
                       {"ok": True, "id": entry_id, "titel": title, **ergebnis})
 
+    @_in_chain
     def _intake(self) -> None:
         """Desktop-Postfach in die Kette übernehmen (ausdrücklich ausgelöst)."""
         if blocker := self._guard():

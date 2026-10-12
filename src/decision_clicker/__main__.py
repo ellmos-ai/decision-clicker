@@ -64,7 +64,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     """Dritter Einstellweg neben UI-Formular und HTTP-API — dasselbe Ziel."""
     settings = _einstellungen(args)
-    with writer.MUTATION_LOCK:
+    with writer.chain_transaction(settings):
         if fremde := writer.foreign_locks(settings):
             print(f"ABBRUCH: fremde Sperre {[p.name for p in fremde]}", file=sys.stderr)
             return 3
@@ -96,7 +96,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_intake(args: argparse.Namespace) -> int:
     settings = _einstellungen(args)
-    with writer.MUTATION_LOCK:
+    with writer.chain_transaction(settings):
         ergebnis = intake.takeover(settings, dry_run=args.dry_run)
     if not ergebnis:
         print("Desktop-Postfach: nichts zu übernehmen.")

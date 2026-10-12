@@ -64,3 +64,13 @@ def frisches_postfach(tmp_path: Path, monkeypatch) -> Path:
     kopie.write_bytes(re.sub(r"D-2026(\d{4})-", r"D-2099\1-", roh).encode("utf-8"))
     monkeypatch.setattr(intake, "DEFAULT_SOURCES", (kopie,))
     return kopie
+
+
+@pytest.fixture(autouse=True)
+def _polaris_isolated_state(tmp_path_factory, monkeypatch):
+    """Tests laufen nie gegen echte Nutzerordner, Leads oder Tokens: LocalStar in tmp."""
+    monkeypatch.setenv("DECISION_CLICKER_STATE_DIR", str(tmp_path_factory.mktemp("state")))
+    for name in ("DECISION_CLICKER_STAR", "DECISION_CLICKER_LEAD_URL", "BACH_LEAD_URL",
+                 "DECISION_CLICKER_DEVICE_TOKEN", "BACH_DEVICE_TOKEN", "DECISION_CLICKER_WORKER",
+                 "DECISION_CLICKER_STAR_RESOURCE", "DECISION_CLICKER_HOST_ID"):
+        monkeypatch.delenv(name, raising=False)
