@@ -253,3 +253,14 @@ def test_resolve_of_a_corrupt_journal_only_allows_keep_current(kette, monkeypatc
         journal.resolve(kette, txid, "restore-before")
     journal.resolve(kette, txid, "keep-current", operator="t")
     assert not journals(kette)
+
+
+@pytest.mark.parametrize("bad", ["..\\x", "../x", "/etc/passwd", "C:\\x", "deadbee", "DEADBEEF", "deadbeef.json", ""])
+def test_txid_is_validated_before_any_path_is_built(kette, bad):
+    secret = kette.chain_dir.parent / "x.json"
+    secret.write_text("{}", encoding="utf-8")
+    for call in (lambda: journal.show(kette, bad), lambda: journal.resolve(kette, bad, "keep-current")):
+        with pytest.raises(WriteError, match="Ungueltige Transaktions-ID"):
+            call()
+    assert cli.main(["polaris", "journal", "show", bad, "--chain", str(kette.chain_dir)]) == 2
+    assert secret.exists()

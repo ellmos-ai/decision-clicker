@@ -351,8 +351,18 @@ def describe(settings: Settings) -> list[dict]:
     return rows
 
 
+TXID_RE = re.compile(r"[0-9a-f]{8}")  # Format von Transaction.txid (uuid4().hex[:8])
+
+
+def _journal_path(settings: Settings, txid: str) -> Path:
+    """txid VOR jeder Pfadbildung gegen das Writer-Format pruefen (kein ``..``, kein absoluter Pfad)."""
+    if not isinstance(txid, str) or not TXID_RE.fullmatch(txid):
+        raise WriteError(f"Ungueltige Transaktions-ID {txid!r} (erwartet: 8 Hex-Zeichen).")
+    return journal_dir(settings) / f"{txid}.json"
+
+
 def show(settings: Settings, txid: str) -> dict:
-    path = journal_dir(settings) / f"{txid}.json"
+    path = _journal_path(settings, txid)
     if not path.is_file():
         raise WriteError(f"Kein Journal {txid}.")
     row = next(r for r in describe(settings) if r["tx"] == txid)
@@ -387,7 +397,7 @@ def resolve(settings: Settings, txid: str, decision: str, operator: str | None =
     from . import writer
     if decision not in ("keep-current", "restore-before"):
         raise WriteError("Entscheidung: keep-current oder restore-before.")
-    path = journal_dir(settings) / f"{txid}.json"
+    path = _journal_path(settings, txid)
     if not path.is_file():
         raise WriteError(f"Kein Journal {txid}.")
     operator = operator or getpass.getuser()
