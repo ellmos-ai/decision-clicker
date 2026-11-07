@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -918,13 +919,24 @@ def write_text_atomic(path: Path, text: str) -> None:
                 os.replace(tmp, path)
                 return
             except PermissionError as exc:
+                if path.exists() and not os.access(path, os.W_OK):
+                    # Schreibschutz loest sich nicht von selbst: sofort melden, nicht warten (Review r1 zu #6).
+                    raise OSError(
+                        f"Zieldatei schreibgeschuetzt: {path} ({exc}); Schreibschutz aufheben und neu starten, "
+                        "die bisherige Datei ist unveraendert.") from exc
                 if attempt == INDEX_REPLACE_RETRIES:
                     raise OSError(
                         f"{path} ist gesperrt und konnte nach {attempt} Versuchen nicht ersetzt werden ({exc}); "
                         "die bisherige Datei ist unveraendert.") from exc
                 time.sleep(INDEX_REPLACE_DELAY)
     finally:
-        tmp.unlink(missing_ok=True)
+        # Die Temp-Datei traegt den Schreibschutz des Ziels (Windows): ohne chmod scheitert unlink, laesst sie liegen
+        # und ueberdeckt den eigentlichen Fehler. Der Aufraeumfehler ersetzt nie den urspruenglichen.
+        try:
+            os.chmod(tmp, stat.S_IWRITE | stat.S_IREAD)
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def main(argv: list[str] | None = None) -> int:
