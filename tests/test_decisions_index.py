@@ -482,3 +482,131 @@ def test_decision_kind_wird_als_eintragsfeld_uebernommen(tmp_path: Path) -> None
 
     assert entries["D-20260101-009"]["decision_kind"] == "cluster-planning"
     assert entries["D-20260101-003"]["decision_kind"] is None
+
+
+# --- T-20261107-711141176: decisions.index.json wird atomar geschrieben -------------------------------------------
+
+
+def _erster_index(tmp_path: Path) -> tuple[Path, bytes]:
+    out = tmp_path / "out"
+    assert di.main(["--root", str(FIXTURES), "--out-dir", str(out), "--json-only"]) == 0
+    return out, (out / "decisions.index.json").read_bytes()
+
+
+def _temp_reste(out: Path) -> list[str]:
+    return [p.name for p in out.iterdir() if p.name.endswith(".tmp")]
+
+
+def _lauf(out: Path) -> int:
+    return di.main(["--root", str(FIXTURES), "--out-dir", str(out), "--json-only"])
+
+
+def test_abbruch_nach_der_temp_datei_laesst_den_alten_index_unberuehrt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out, before = _erster_index(tmp_path)
+
+    def abbruch(fd: int) -> None:
+        raise OSError("Stromausfall (simuliert)")
+
+    monkeypatch.setattr(di.os, "fsync", abbruch)
+
+    assert _lauf(out) == 2
+    assert (out / "decisions.index.json").read_bytes() == before
+    json.loads(before)
+    assert _temp_reste(out) == []
+    assert "Index nicht geschrieben" in capsys.readouterr().err
+
+
+def test_ohne_vorherigen_index_bleibt_bei_abbruch_keine_halbe_datei(tmp_path: Path, monkeypatch) -> None:
+    out = tmp_path / "out"
+
+    def abbruch(fd: int) -> None:
+        raise OSError("Stromausfall (simuliert)")
+
+    monkeypatch.setattr(di.os, "fsync", abbruch)
+
+    assert _lauf(out) == 2
+    assert not (out / "decisions.index.json").exists()
+    assert _temp_reste(out) == []
+
+
+def test_dauerhaft_gesperrtes_ziel_gibt_klaren_fehler_und_laesst_die_alte_datei(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out, before = _erster_index(tmp_path)
+    pausen: list[float] = []
+    monkeypatch.setattr(di.time, "sleep", pausen.append)
+
+    def gesperrt(src, dst):
+        raise PermissionError("Zugriff verweigert (simuliert)")
+
+    monkeypatch.setattr(di.os, "replace", gesperrt)
+
+    assert _lauf(out) == 2
+    assert (out / "decisions.index.json").read_bytes() == before
+    assert _temp_reste(out) == []
+    assert len(pausen) == di.INDEX_REPLACE_RETRIES - 1
+    assert "gesperrt" in capsys.readouterr().err
+
+
+def test_kurz_gesperrtes_ziel_wird_wiederholt_und_dann_geschrieben(tmp_path: Path, monkeypatch) -> None:
+    out, _ = _erster_index(tmp_path)
+    echte = di.os.replace
+    versuche: list[int] = []
+    monkeypatch.setattr(di.time, "sleep", lambda s: None)
+
+    def zweimal_gesperrt(src, dst):
+        versuche.append(1)
+        if len(versuche) <= 2:
+            raise PermissionError("kurz gesperrt (simuliert)")
+        echte(src, dst)
+
+    monkeypatch.setattr(di.os, "replace", zweimal_gesperrt)
+
+    assert _lauf(out) == 0
+    assert len(versuche) == 3
+    assert json.loads((out / "decisions.index.json").read_text(encoding="utf-8"))["schema"] == "decisions.index/1"
+    assert _temp_reste(out) == []
+
+
+def test_temp_datei_ist_vollstaendig_und_liegt_im_selben_ordner_vor_dem_replace(
+    tmp_path: Path, monkeypatch
+) -> None:
+    out, before = _erster_index(tmp_path)
+    echte = di.os.replace
+    gesehen: list[str] = []
+
+    def pruefen(src, dst):
+        gesehen.append("replace")
+        assert Path(src).parent == Path(dst).parent
+        neu = json.loads(Path(src).read_text(encoding="utf-8"))
+        assert neu["schema"] == "decisions.index/1" and neu["entries"], "die Temp-Datei ist vollstaendiges JSON"
+        assert Path(dst).read_bytes() == before, "das Ziel ist bis zum replace der alte, vollstaendige Index"
+        echte(src, dst)
+
+    monkeypatch.setattr(di.os, "replace", pruefen)
+
+    assert _lauf(out) == 0
+    assert gesehen == ["replace"]
+
+
+def test_normaler_lauf_schreibt_gleiche_eintraege_und_hinterlaesst_keine_temp_datei(tmp_path: Path) -> None:
+    out, first = _erster_index(tmp_path)
+    data = json.loads(first)
+    assert data["counts"]["total"] == len(data["entries"]) == 7
+    assert _temp_reste(out) == []
+
+
+def test_encodierfehler_laesst_den_alten_index_unberuehrt(tmp_path: Path, monkeypatch) -> None:
+    out, before = _erster_index(tmp_path)
+
+    def kaputt(*args, **kwargs):
+        raise TypeError("nicht serialisierbar (simuliert)")
+
+    monkeypatch.setattr(di.json, "dumps", kaputt)
+
+    with pytest.raises(TypeError):
+        _lauf(out)
+    assert (out / "decisions.index.json").read_bytes() == before
+    assert _temp_reste(out) == []
