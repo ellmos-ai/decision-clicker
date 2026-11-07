@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 from pathlib import Path
 
 import pytest
@@ -608,5 +610,53 @@ def test_encodierfehler_laesst_den_alten_index_unberuehrt(tmp_path: Path, monkey
 
     with pytest.raises(TypeError):
         _lauf(out)
+    assert (out / "decisions.index.json").read_bytes() == before
+    assert _temp_reste(out) == []
+
+
+# --- Review r1 zu decision-clicker#6: schreibgeschuetzter Index ------------------------------------------------------
+
+
+def _lauf_mit_schreibschutz(out: Path) -> int:
+    ziel = out / "decisions.index.json"
+    ziel.chmod(stat.S_IREAD)
+    try:
+        return _lauf(out)
+    finally:
+        ziel.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="nur unter Windows scheitert os.replace an einer schreibgeschuetzten Datei")
+def test_schreibgeschuetzter_index_gibt_klare_meldung_ohne_temp_rest(tmp_path: Path, monkeypatch, capsys) -> None:
+    out, before = _erster_index(tmp_path)
+    monkeypatch.setattr(di.time, "sleep", lambda s: None)
+    capsys.readouterr()
+
+    assert _lauf_mit_schreibschutz(out) == 2
+
+    err = capsys.readouterr().err
+    assert "Index nicht geschrieben: Zieldatei schreibgeschuetzt" in err, err
+    assert str(out / "decisions.index.json") in err, "genannt wird das Ziel, nicht die Temp-Datei"
+    assert (out / "decisions.index.json").read_bytes() == before
+    assert _temp_reste(out) == [], "die Temp-Datei traegt den Schreibschutz des Ziels und muss trotzdem entfernt werden"
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignoriert den Schreibschutz")
+def test_schreibgeschuetztes_ziel_wird_benannt_und_nicht_wiederholt(tmp_path: Path, monkeypatch, capsys) -> None:
+    out, before = _erster_index(tmp_path)
+    pausen: list[float] = []
+    monkeypatch.setattr(di.time, "sleep", pausen.append)
+
+    def verweigert(src, dst):
+        raise PermissionError("Zugriff verweigert (simuliert)")
+
+    monkeypatch.setattr(di.os, "replace", verweigert)
+    capsys.readouterr()
+
+    assert _lauf_mit_schreibschutz(out) == 2
+
+    err = capsys.readouterr().err
+    assert "Index nicht geschrieben: Zieldatei schreibgeschuetzt" in err, err
+    assert pausen == [], "ein Schreibschutz loest sich nicht von selbst: sofort melden, nicht 5 mal warten"
     assert (out / "decisions.index.json").read_bytes() == before
     assert _temp_reste(out) == []
