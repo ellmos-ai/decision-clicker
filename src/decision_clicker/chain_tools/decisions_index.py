@@ -32,6 +32,8 @@ import json
 import os
 import re
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -887,6 +889,44 @@ def render_report(index: dict) -> str:
 
 
 # --------------------------------------------------------------------------
+INDEX_REPLACE_RETRIES = 5
+INDEX_REPLACE_DELAY = 0.2  # Sekunden; OneDrive oder ein Virenscanner halten die Zieldatei manchmal kurz fest
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Schreibt `text` nach `path`, ohne dass `path` je halb geschrieben sichtbar ist.
+
+    Erst vollstaendig im Speicher encodieren (ein Fehler dort laesst die alte Datei unberuehrt), dann in eine
+    temporaere Datei im SELBEN Ordner schreiben, flush + fsync, dann `os.replace` (atomar auf demselben Laufwerk).
+    Ist die Zieldatei kurz gesperrt (Windows/OneDrive: PermissionError), wird wenige Male kurz wiederholt; danach
+    kommt ein klarer Fehler, und die alte Datei bleibt unveraendert. Vorher schrieb `write_text` in die Zieldatei
+    selbst: ein Abbruch mitten im Schreiben liess einen halben Index zurueck, und jeder Readback war unlesbar
+    (T-20261107-711141176).
+    """
+    data = text.encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, path.stat().st_mode & 0o777 if path.exists() else 0o644)
+        for attempt in range(1, INDEX_REPLACE_RETRIES + 1):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as exc:
+                if attempt == INDEX_REPLACE_RETRIES:
+                    raise OSError(
+                        f"{path} ist gesperrt und konnte nach {attempt} Versuchen nicht ersetzt werden ({exc}); "
+                        "die bisherige Datei ist unveraendert.") from exc
+                time.sleep(INDEX_REPLACE_DELAY)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     # `__doc__` ist unter `python -OO` None -- dann waere der Argparse-Aufbau
     # ein AttributeError, bevor irgendetwas geprueft wird.
@@ -913,8 +953,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     index = build_index(root)
-    (out_dir / "decisions.index.json").write_text(
-        json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        write_text_atomic(out_dir / "decisions.index.json", json.dumps(index, ensure_ascii=False, indent=2) + "\n")
+    except OSError as exc:
+        print(f"FEHLER: Index nicht geschrieben: {exc}", file=sys.stderr)
+        return 2
 
     report = render_report(index)
     if not args.json_only:
