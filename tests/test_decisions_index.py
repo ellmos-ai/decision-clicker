@@ -463,3 +463,22 @@ def test_vorlage_mit_qualifier_ist_entscheidungsreif(tmp_path: Path) -> None:
     assert treffer["decision_ready"] is True
     assert treffer["question"] == "Wird die Kennung akzeptiert?"
     assert index["active_contract"]["valid"] is True
+
+
+def test_decision_kind_wird_als_eintragsfeld_uebernommen(tmp_path: Path) -> None:
+    """Nachzertifizierung (Fremdaenderung, vom Register-Original genutzt): DECISION_KIND wird ein eigenes Feld,
+    damit der Readback Rahmenentscheide (cluster-planning) von Einzelentscheiden unterscheiden kann."""
+    source = tmp_path / "kette"
+    shutil.copytree(FIXTURES, source)
+    done = source / "DECIDED-AND-DONE.md"
+    done.write_text(
+        done.read_text(encoding="utf-8") + "\n---\n\n## D-20260101-009 \u2014 Rahmenentscheid\n\n"
+        "STATUS: ERLEDIGT 2026-01-05 \u2014 umgesetzt.\nDECISION_KIND: cluster-planning\nQUELLE: Fixture.\n"
+        "FRAGE: Wurde der Rahmen angenommen?\nENTSCHEIDUNG DES USERS: [A]\n",
+        encoding="utf-8",
+    )
+
+    entries = {entry["id"]: entry for entry in di.build_index(source)["entries"]}
+
+    assert entries["D-20260101-009"]["decision_kind"] == "cluster-planning"
+    assert entries["D-20260101-003"]["decision_kind"] is None

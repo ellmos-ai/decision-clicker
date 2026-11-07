@@ -107,6 +107,7 @@ FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
     "optionen": re.compile(r"^OPTIONEN\s*:\s*(.*)$", re.I),
     "empfehlung": re.compile(r"^EMPFEHLUNG\s*:\s*(.*)$", re.I),
     "scope": re.compile(r"^SCOPE\s*:\s*(.*)$", re.I),
+    "decision_kind": re.compile(r"^DECISION_KIND\s*:\s*(.*)$", re.I),
     # "ENTSCHEIDUNG DES USERS:" und Varianten wie "ENTSCHEIDUNG DES USERS E02:"
     "entscheidung": re.compile(r"^ENTSCHEIDUNG\s+DES\s+USERS\b[^:]*:\s*(.*)$", re.I),
 }
@@ -117,7 +118,7 @@ TERMINATOR_RE = re.compile(
     r"|UMSETZUNGSSTATUS|UMSETZUNGSHINWEIS|UMSETZUNGSGATE|VERBINDLICHE[^:]*"
     r"|HINWEIS|KORREKTUR|BETROFFEN|VORFALL|ALS ENTSCHIEDEN BELEGT|OFFEN"
     r"|OPTION\s+[A-Z]|KANONISCHE ID|ZUSATZABGRENZUNG|VERIFIZIERTER STAND"
-    r"|EMPFEHLUNG|QUELLE|STATUS|FRAGE|OPTIONEN|SCOPE)\s*[:\u2014-]",
+    r"|EMPFEHLUNG|QUELLE|STATUS|FRAGE|OPTIONEN|SCOPE|DECISION_KIND|ENTSCHIEDEN AM|ENTSCHEIDUNG)\s*[:\u2014-]",
     re.I,
 )
 SEPARATOR_RE = re.compile(r"^\s*(-{3,}|={3,}|_{3,})\s*$")
@@ -232,6 +233,7 @@ class Entry:
             "status_raw": excerpt(self.fields.get("status", "")),
             "scope": scope,
             "scope_explicit": scope_explicit,
+            "decision_kind": self.fields.get("decision_kind", "").strip() or None,
             "decision_field_raw": excerpt(self.decision_raw),
             "decision_ready": self.decision_ready,
             "options_excerpt": excerpt(self.fields.get("optionen", "")),
