@@ -494,26 +494,30 @@ def takeover(settings: Settings, *, dry_run: bool = False, on: str | None = None
             writer.proposal_status(eintrag.fields.get("STATUS", ""))
             == writer.STATUS_NEEDS_EVIDENCE
         )
-        if not eintrag.decided and not needs_evidence and (
+        # KLÄRUNG NÖTIG ist nie entscheidbar: Ein ausgefülltes Entscheidungsfeld macht
+        # den Eintrag nicht zum Beleg. Er wird als nicht klickbare Klärungsvorlage
+        # übernommen; der eingetragene Text bleibt im zitierten Originalwortlaut.
+        entschieden = eintrag.decided and not needs_evidence
+        if not entschieden and not needs_evidence and (
             not eintrag.frage.strip() or not eintrag.optionen
         ):
             raise writer.WriteError(
                 f"{eintrag.entry_id} ist im Postfach nicht entscheidungsreif "
                 "(Frage und Optionen sind erforderlich)."
             )
-        ziel = settings.done_file if eintrag.decided else chain.target_part(settings)
+        ziel = settings.done_file if entschieden else chain.target_part(settings)
         marker = (f"→ {TAKEN_MARK} ({stamp}) — dort als {eintrag.entry_id} in "
                   f"{ziel.name}; dieser Eintrag ist ab hier nur noch Historie.")
         eintrag_info = {
             "id": eintrag.entry_id, "titel": eintrag.title,
-            "entschieden": eintrag.decided, "ziel": ziel.name,
+            "entschieden": entschieden, "ziel": ziel.name,
             "quelle": str(eintrag.path), "marker": marker,
         }
         if dry_run:
             ergebnisse.append(eintrag_info)
             continue
 
-        if eintrag.decided:
+        if entschieden:
             writer.append_done_block(settings, render_done_takeover(eintrag, on=stamp))
         else:
             writer.append_entry(settings, ziel, render_takeover(eintrag, on=stamp))
