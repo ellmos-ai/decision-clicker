@@ -3,6 +3,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+.turbo/
+.nyc_output/
 # Test, coverage, and packaging artifacts
 .coverage
 .coverage.*
@@ -39,8 +44,14 @@ _local/
 *-WORKSTATION.*
 *-ASUS-GEI*
 *-WORKSTATION-LG*
+*-LAPTOP*
+*-Mac Studio*
+*-MacBook*
 * (kopie)*
 * (copy)*
+* (Kopie)*
+* (Copy)*
+*conflicted copy*
 CONFLICT_REVIEW_LOG*
 *.orig
 *.rej
@@ -63,10 +74,14 @@ id_ed25519*
 # Multi-agent locks (fail-closed concurrency governance)
 LOCK
 LOCK.*
+LOCK.user.*
+LOCK.until.*
+LOCK.condition.*
 *.lock
 LOCK*.txt
 LOCK.permissions.json
 uv.lock
+!package-lock.json
 
 # Legacy real-data fixture retained on some maintainer systems; never track.
 tests/data/postfach_2026-08-07.txt

@@ -431,3 +431,60 @@ def test_security_policy_remediation_sla():
     assert "30 Tage Fix-Plan" in content or "30 Tage Behebung" in content
     assert "30 Kalendertagen" in content
 
+
+
+def test_ci_timeout_minutes_guardrails():
+    """Verify CI workflow defines a 15-minute execution timeout guardrail."""
+    ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+    assert ci_path.is_file(), "ci.yml must exist"
+    content = ci_path.read_text(encoding="utf-8")
+    assert "timeout-minutes: 15" in content, "CI test matrix job must define timeout-minutes: 15"
+
+
+def test_ci_stale_workflow_integrity():
+    """Verify .github/workflows/stale.yml exists with required action, timeout and concurrency."""
+    stale_path = ROOT / ".github" / "workflows" / "stale.yml"
+    assert stale_path.is_file(), "stale.yml must exist"
+    content = stale_path.read_text(encoding="utf-8")
+    assert "actions/stale@v9" in content
+    assert "timeout-minutes: 10" in content
+    assert "cancel-in-progress: true" in content
+    assert "issues: write" in content
+    assert "pull-requests: write" in content
+
+
+def test_ci_welcome_workflow_integrity():
+    """Verify .github/workflows/welcome.yml exists with first-interaction action, timeout and concurrency."""
+    welcome_path = ROOT / ".github" / "workflows" / "welcome.yml"
+    assert welcome_path.is_file(), "welcome.yml must exist"
+    content = welcome_path.read_text(encoding="utf-8")
+    assert "actions/first-interaction@v3" in content
+    assert "timeout-minutes: 5" in content
+    assert "cancel-in-progress: true" in content
+    assert "issues: write" in content
+    assert "pull-requests: write" in content
+
+
+def test_extended_gitignore_sync_and_lock_defense():
+    """Verify .gitignore contains extended multi-host lock, cache and conflict defense rules."""
+    gitignore_path = ROOT / ".gitignore"
+    content = gitignore_path.read_text(encoding="utf-8")
+    extra_patterns = [
+        "* (Kopie)*",
+        "* (Copy)*",
+        "*conflicted copy*",
+        "*-LAPTOP*",
+        "*-Mac Studio*",
+        "*-MacBook*",
+        "LOCK.user.*",
+        "LOCK.until.*",
+        "LOCK.condition.*",
+        "!package-lock.json",
+        ".hypothesis/",
+        ".turbo/",
+        ".nyc_output/",
+        ".tox/",
+        ".mypy_cache/",
+    ]
+    for pattern in extra_patterns:
+        assert pattern in content, f"Missing extended pattern in .gitignore: {pattern}"

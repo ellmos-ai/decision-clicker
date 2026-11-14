@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows
 
 - **Polaris (Polarstern), P2:** Nur der Halter des Polaris star schreibt in die Kette (`star.py`: ServerStar per BACH-Lead und Geräte-Token, LocalStar nur für nicht geteilte Ketten, kein `off`). Choke-Point in `writer._write`/`_unlink`/`write_lock`/`release_lock`, Transaktionsjournal für `decide_entry`/`restore_decision`, Fence-Stempel `POLARIS-STAR:`, Manifest-Hash als Commit-Marker, Sicherungen außerhalb des Kettenordners. Details: `docs/POLARIS.md`.
 
+### Changed
+
+- **CI and repository hygiene (port of the lost hygiene commit `5c1cb0e`, [G 2026-09-18]; T-20261114-339823777):** the CI test matrix job gets `timeout-minutes: 15`; new `stale.yml` (`actions/stale@v9`) and `welcome.yml` (`actions/first-interaction@v3`) workflows with timeouts, `cancel-in-progress` concurrency and least-privilege permissions; `.gitignore` additionally ignores multi-host conflict copies, `LOCK.user.*`/`LOCK.until.*`/`LOCK.condition.*` and further tool caches; ruff also selects `W`; four contract tests in `tests/test_metadata.py` pin these guardrails. The commit had been made on a local history that upstream rewrote on 2026-09-18 and never reached `master`. Its version bump is deliberately not ported: 1.1.2 remains the latest release and no newer version was ever tagged.
+
 ### Fixed
 
 - A failed or interrupted lock write no longer leaves an orphaned, unregistered
