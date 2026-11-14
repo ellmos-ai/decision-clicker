@@ -257,3 +257,48 @@ def test_release_bewahrt_zwischenzeitlich_ersetzten_claim(kette: Settings):
 
 def test_release_ohne_vorhandenen_claim_bleibt_false(kette: Settings):
     assert writer.release_lock(kette) is False
+
+
+def _fsync_scheitert_fuer_unregistrierten_claim(kette: Settings, monkeypatch, fehler: BaseException) -> None:
+    """Nur das fsync des noch nicht registrierten Lock-Handles scheitern lassen."""
+    import os
+
+    echtes_fsync = os.fsync
+
+    def fsync(fd):
+        if kette.lock_file.exists() and writer._OWNED_LOCKS.get(kette.lock_file.resolve(strict=False)) is None:
+            raise fehler
+        return echtes_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+
+
+def test_schreibfehler_hinterlaesst_keinen_verwaisten_eigenen_claim(kette: Settings, monkeypatch):
+    _fsync_scheitert_fuer_unregistrierten_claim(kette, monkeypatch, OSError(28, "No space left on device"))
+
+    with pytest.raises(writer.WriteError, match="Teil-Claim entfernt"):
+        writer.write_lock(kette, "Test")
+
+    assert not kette.lock_file.exists()
+    assert writer.foreign_locks(kette) == []
+    monkeypatch.undo()
+    writer.write_lock(kette, "Test")  # kein Selbstblock nach dem Fehler
+    assert writer.release_lock(kette) is True
+
+
+def test_abbruch_beim_schreiben_raeumt_eigenen_claim_auf(kette: Settings, monkeypatch):
+    _fsync_scheitert_fuer_unregistrierten_claim(kette, monkeypatch, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        writer.write_lock(kette, "Test")
+
+    assert not kette.lock_file.exists()
+    assert writer.foreign_locks(kette) == []
+
+
+def test_teil_claim_mit_fremdem_inhalt_bleibt_stehen(kette: Settings):
+    fremd = b"LOCK -- replacement fixture\nAGENT: other-process\n"
+    kette.lock_file.write_bytes(fremd)
+
+    assert writer._discard_partial_claim(kette.lock_file, b"LOCK \xe2\x80\x94 decision-clicker\n") is False
+    assert kette.lock_file.read_bytes() == fremd
