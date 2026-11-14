@@ -11,7 +11,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- **CI and repository hygiene (port of the lost v1.1.3 hygiene commit `5c1cb0e`, [G 2026-09-18]; T-20261114-339823777):** the CI test matrix job gets `timeout-minutes: 15`; new `stale.yml` (`actions/stale@v9`) and `welcome.yml` (`actions/first-interaction@v3`) workflows with timeouts, `cancel-in-progress` concurrency and least-privilege permissions; `.gitignore` additionally ignores multi-host conflict copies, `LOCK.user.*`/`LOCK.until.*`/`LOCK.condition.*` and further tool caches; ruff also selects `W`; four contract tests in `tests/test_metadata.py` pin these guardrails. The commit had been made on a local history that upstream rewrote on 2026-09-18 and never reached `master`. Its version bump to 1.1.3 is deliberately not ported: 1.1.2 is the latest release, no 1.1.3 was ever tagged.
+- **CI and repository hygiene (port of the lost hygiene commit `5c1cb0e`, [G 2026-09-18]; T-20261114-339823777):** the CI test matrix job gets `timeout-minutes: 15`; new `stale.yml` (`actions/stale@v9`) and `welcome.yml` (`actions/first-interaction@v3`) workflows with timeouts, `cancel-in-progress` concurrency and least-privilege permissions; `.gitignore` additionally ignores multi-host conflict copies, `LOCK.user.*`/`LOCK.until.*`/`LOCK.condition.*` and further tool caches; ruff also selects `W`; four contract tests in `tests/test_metadata.py` pin these guardrails. The commit had been made on a local history that upstream rewrote on 2026-09-18 and never reached `master`. Its version bump is deliberately not ported: 1.1.2 remains the latest release and no newer version was ever tagged.
 
 ### Fixed
 
