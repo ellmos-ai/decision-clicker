@@ -24,9 +24,22 @@ from datetime import datetime
 from pathlib import Path
 
 from . import journal, star
-from .chain import DONE_HEADING_RE, ChainError, _load_index_tool
+from .chain import (
+    DONE_HEADING_RE,
+    STATUS_NEEDS_EVIDENCE,
+    STATUS_OPEN,
+    ChainError,
+    _load_index_tool,
+)
 from .config import Settings
 from .errors import StarUnavailable, WriteError
+from .versioning import (
+    DEFAULT_VERSION,
+    derive_evidence_state,
+    from_entry,
+    normalise_evidence_state,
+    normalise_version,
+)
 
 DECISION_FIELD_RE = re.compile(r"^(\s*ENTSCHEIDUNG\s+DES\s+USERS\b[^:]*:)(.*)$", re.I)
 DECIDED_AT_RE = re.compile(r"^\s*ENTSCHIEDEN\s+AM\s*:", re.I)
@@ -50,6 +63,50 @@ def single_line(value: str, field: str) -> str:
     if LINE_BREAK_RE.search(value):
         raise WriteError(f"{field} darf keinen Zeilenumbruch enthalten.")
     return value.strip()
+
+
+def canonical_status(value: str) -> str:
+    """Canonicalize a proposal status; answered states are never accepted."""
+    raw = single_line(str(value or ""), "Status")
+    folded = " ".join(raw.casefold().replace("_", " ").replace("-", " ").split())
+    if not raw or folded.startswith("offen"):
+        return STATUS_OPEN
+    if folded == "needs evidence" or folded.startswith("klärung nötig") \
+            or folded.startswith("klaerung noetig"):
+        return STATUS_NEEDS_EVIDENCE
+    raise WriteError(
+        "Neue Vorschläge dürfen nur OFFEN oder KLÄRUNG NÖTIG sein; "
+        "Antworten und Umsetzungsstatus setzt ausschließlich die menschliche UI."
+    )
+
+
+def proposal_status(value: str) -> str:
+    """Map untrusted proposal metadata to a safe non-answered status."""
+    try:
+        return canonical_status(value)
+    except WriteError:
+        return STATUS_OPEN
+
+
+def _version_value(value: object, field: str) -> str:
+    try:
+        return normalise_version(value, field)
+    except ValueError as exc:
+        raise WriteError(str(exc)) from exc
+
+
+def _evidence_value(value: object) -> str:
+    try:
+        return normalise_evidence_state(value)
+    except ValueError as exc:
+        raise WriteError(str(exc)) from exc
+
+
+def _entry_versions(entry: dict) -> dict[str, str]:
+    try:
+        return from_entry(entry)
+    except ValueError as exc:
+        raise WriteError(str(exc)) from exc
 
 
 def metadata_values(values: list[str] | None, field: str) -> str:
@@ -563,6 +620,9 @@ def render_entry(
     fehlende_informationen: list[str] | None = None,
     erstellt_von: str = "",
     kontext_fingerprint: str = "",
+    optionen_version: str | int = DEFAULT_VERSION,
+    empfehlung_version: str | int = DEFAULT_VERSION,
+    evidenzstand: str = "",
     newline: str = "\r\n",
 ) -> str:
     """Eintrag nach der Konvention des Kettenkopfes parserfest rendern.
@@ -575,7 +635,7 @@ def render_entry(
     if not ENTRY_ID_RE.fullmatch(entry_id):
         raise WriteError(f"Ungültige Entscheidungs-ID: {entry_id!r}")
     title = single_line(title, "Titel")
-    status = single_line(status, "Status")
+    status = canonical_status(status)
     quelle = single_line(quelle, "Quelle")
     frage = single_line(frage, "Frage")
     empfehlung = single_line(empfehlung, "Empfehlung")
@@ -587,7 +647,16 @@ def render_entry(
     kontext_fingerprint = single_line(kontext_fingerprint, "Kontext-Fingerprint").lower()
     if kontext_fingerprint and not CONTEXT_FINGERPRINT_RE.fullmatch(kontext_fingerprint):
         raise WriteError("Kontext-Fingerprint muss sha256: gefolgt von 64 Hex-Zeichen sein.")
-    if status.strip().upper() == "OFFEN":
+    optionen_version = _version_value(optionen_version, "Optionen-Version")
+    empfehlung_version = _version_value(empfehlung_version, "Empfehlungs-Version")
+    evidenzstand = single_line(evidenzstand, "Evidenzstand")
+    if not evidenzstand:
+        evidenzstand = kontext_fingerprint or derive_evidence_state(
+            quelle, evidenzanker_text, gegenbelege_text, fehlende_text,
+            erstellt_von, kontext_fingerprint, kontext,
+        )
+    evidenzstand = _evidence_value(evidenzstand)
+    if status == STATUS_OPEN:
         if not frage:
             raise WriteError("Eine aktive Entscheidung benötigt eine Frage.")
         if not optionen or not any(option.strip() for option in optionen):
@@ -603,6 +672,9 @@ def render_entry(
         ("FEHLENDE INFORMATIONEN", fehlende_text),
         ("ERSTELLT VON", erstellt_von),
         ("KONTEXT-FINGERPRINT", kontext_fingerprint),
+        ("OPTIONEN-VERSION", optionen_version),
+        ("EMPFEHLUNG-VERSION", empfehlung_version),
+        ("EVIDENZSTAND", evidenzstand),
     ):
         if value:
             rows += ["", f"{name}: {value}"]
@@ -706,6 +778,8 @@ def append_done(
     lines = text.splitlines(keepends=True)
     newline = _newline_of(lines)
     day = on or datetime.now().strftime("%Y-%m-%d")
+    versions = _entry_versions(entry)
+    reference = versions["version_reference"]
 
     rows = [
         "",
@@ -714,6 +788,10 @@ def append_done(
         f"ENTSCHIEDEN AM: {day} ({TOOL_TAG})",
         f"ENTSCHEIDUNG: {render_decision(choice, note)}",
         f"QUELLE IN DER KETTE: `{entry['source_file']}`, Zeile {entry['source_line']}",
+        f"OPTIONEN-VERSION: {versions['optionen_version']}",
+        f"EMPFEHLUNG-VERSION: {versions['empfehlung_version']}",
+        f"EVIDENZSTAND: {versions['evidenzstand']}",
+        f"VERSION-REFERENZ: {reference}",
         "AKTIVVORLAGE: entfernt — beantwortete Punkte sind nicht mehr aktiv.",
         "UMSETZUNG: separat zu verfolgen; ein offener Umsetzungsstand reaktiviert die Frage nicht.",
         "",
@@ -737,6 +815,7 @@ def decide_entry(
     note: str = "",
     *,
     on: str | None = None,
+    expected_version_reference: str = "",
 ) -> dict:
     """Antwort protokollieren und den Vollblock sofort aus Aktiv entfernen.
 
@@ -747,6 +826,12 @@ def decide_entry(
     """
     if entry.get("decision_ready") is not True:
         raise WriteError(f"{entry.get('key', entry.get('id', '?'))} ist nicht entscheidungsreif aktiv.")
+    actual_reference = _entry_versions(entry)["version_reference"]
+    if expected_version_reference and expected_version_reference != actual_reference:
+        raise WriteError(
+            f"{entry.get('key', entry.get('id', '?'))} trägt eine veraltete "
+            "Options-/Empfehlungs-Version — bitte neu laden."
+        )
     path = Path(entry["source_path"])
     text, _has_bom = _read(path)
     lines = text.splitlines(keepends=True)

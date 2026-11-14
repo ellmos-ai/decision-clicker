@@ -283,6 +283,7 @@ decision-clicker add "Auswahl der Rollout-Strategie" \
   --option "A — Blue/Green mit sofortiger Verkehrsumschaltung" \
   --option "B — Canary-Rollout gestaffelt über 48 Stunden" \
   --empfehlung "B — Canary ermöglicht automatischen Rollback" \
+  --optionen-version 1 --empfehlung-version 1 \
   --dry-run
 ```
 
@@ -330,9 +331,11 @@ curl -X POST http://127.0.0.1:8096/api/new \
   -d '{"frage": "1.2.0 veröffentlichen?", "optionen": ["A: ja", "B: warten"]}'
 ```
 
-Ein eingestellter Kandidat wird immer als `STATUS: OFFEN` mit unbeantwortetem
-Nutzerfeld gerendert; mitgesendete Felder `status`, `decision` oder
-`implemented` bleiben wirkungslos. KI-, Memory- und Policy-Adapter erhalten
+Ein eingestellter Kandidat erhält ein unbeantwortetes Nutzerfeld. Standard ist
+`OFFEN`; auch `KLÄRUNG NÖTIG`/`needs_evidence` wird akzeptiert, bleibt sichtbar
+und ist nicht klickbar. Mitgesendete Werte `DONE`, `decision` oder `implemented`
+können niemals antworten oder umsetzen und werden auf den sicheren offenen
+Status reduziert. KI-, Memory- und Policy-Adapter erhalten
 `decision_clicker.api.ProposalSubmitter`, nicht die menschliche
 Mutationsfassade `DecisionClicker`.
 
@@ -340,7 +343,10 @@ Optionale Belegmetadaten nutzen diese einzeiligen Felder: `EVIDENZANKER`,
 `GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` und
 `KONTEXT-FINGERPRINT`. Mehrere Werte werden mit ` | ` verbunden; ein
 Fingerprint hat die Form `sha256:` plus 64 Hex-Zeichen. Sie verbessern die
-Belegsuche, bescheinigen aber niemals Wahrheit.
+Belegsuche, bescheinigen aber niemals Wahrheit. Jeder neue Vorschlag trägt
+zusätzlich `OPTIONEN-VERSION`, `EMPFEHLUNG-VERSION` und `EVIDENZSTAND`; der
+menschliche Klickbeleg speichert die exakt betrachtete Versionsreferenz. Ein
+veralteter Stand einer älteren Prüfseite wird vor jedem Schreiben abgewiesen.
 
 ---
 

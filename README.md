@@ -283,6 +283,7 @@ decision-clicker add "Rollout Strategy Selection" \
   --option "A — Blue/Green with immediate traffic switch" \
   --option "B — Canary staged release over 48 hours" \
   --empfehlung "B — Canary provides automated rollback" \
+  --optionen-version 1 --empfehlung-version 1 \
   --dry-run
 ```
 
@@ -329,9 +330,11 @@ curl -X POST http://127.0.0.1:8096/api/new \
   -d '{"frage": "Ship 1.2.0?", "optionen": ["A: yes", "B: wait"]}'
 ```
 
-A submitted candidate is always rendered as `STATUS: OFFEN` with an unanswered
-user field; supplied `status`, `decision` or `implemented` properties have no
-effect. AI, memory and policy adapters receive
+A submitted candidate is rendered with an unanswered user field. `OFFEN` is
+the default; `KLÄRUNG NÖTIG`/`needs_evidence` is also accepted and remains
+visible but not clickable. Supplied `DONE`, `decision` or `implemented`
+properties can never answer or implement a candidate and are reduced to the
+safe open status. AI, memory and policy adapters receive
 `decision_clicker.api.ProposalSubmitter`, not the human `DecisionClicker`
 mutation facade.
 
@@ -339,7 +342,10 @@ Optional evidence metadata uses these single-line fields: `EVIDENZANKER`,
 `GEGENBELEGE`, `FEHLENDE INFORMATIONEN`, `ERSTELLT VON` and
 `KONTEXT-FINGERPRINT`. Multiple values are joined with ` | `; a fingerprint has
 the form `sha256:` plus 64 hex characters. They improve provenance lookup but
-never certify truth.
+never certify truth. Every new proposal additionally carries
+`OPTIONEN-VERSION`, `EMPFEHLUNG-VERSION` and `EVIDENZSTAND`; the human click
+receipt records the exact combined version reference. A stale version from an
+older review page is rejected before any write.
 
 ---
 

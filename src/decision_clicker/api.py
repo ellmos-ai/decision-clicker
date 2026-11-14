@@ -39,7 +39,9 @@ def _submit_proposal(
     empfehlung: str = "", kontext: str = "", quelle: str = "", scope: str = "",
     evidenzanker: list[str] | None = None, gegenbelege: list[str] | None = None,
     fehlende_informationen: list[str] | None = None, erstellt_von: str = "",
-    kontext_fingerprint: str = "",
+    kontext_fingerprint: str = "", status: str = "",
+    optionen_version: str | int = "1", empfehlung_version: str | int = "1",
+    evidenzstand: str = "",
 ) -> dict:
     """Nur einen offenen Vorschlag schreiben; keine Antwort-/Done-Fähigkeit."""
     with writer.chain_transaction(settings):
@@ -56,12 +58,16 @@ def _submit_proposal(
         entry_id = chain.next_id(index)
         ziel = chain.target_part(settings)
         rendered = writer.render_entry(
-            entry_id, title.strip(), quelle=quelle.strip(), frage=frage.strip(),
+            entry_id, title.strip(), status=writer.proposal_status(status),
+            quelle=quelle.strip(), frage=frage.strip(),
             optionen=[o for o in (optionen or []) if o.strip()],
             empfehlung=empfehlung.strip(), kontext=kontext, scope=scope.strip(),
             evidenzanker=evidenzanker, gegenbelege=gegenbelege,
             fehlende_informationen=fehlende_informationen,
             erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+            optionen_version=optionen_version,
+            empfehlung_version=empfehlung_version,
+            evidenzstand=evidenzstand,
         )
         ergebnis = writer.append_entry(settings, ziel, rendered)
         try:
@@ -169,7 +175,10 @@ class DecisionClicker:
                 f"Fremde Sperre im Entscheidungsordner ({', '.join(p.name for p in fremde)}) "
                 "— es wird nicht geschrieben.")
 
-    def decide(self, key: str, choice: str, note: str = "") -> dict:
+    def decide(
+        self, key: str, choice: str, note: str = "", *,
+        version_reference: str = "",
+    ) -> dict:
         """Entscheidung belegen und sofort aus der Aktivvorlage entfernen."""
         with writer.chain_transaction(self.settings):
             self._guard()
@@ -185,7 +194,10 @@ class DecisionClicker:
                 raise WriteError(f"{key} steht nicht in der Kette.")
             if entry.get("decision_ready") is not True:
                 raise WriteError(f"{key} ist nicht entscheidungsreif aktiv.")
-            ergebnis = writer.decide_entry(self.settings, entry, choice, note)
+            ergebnis = writer.decide_entry(
+                self.settings, entry, choice, note,
+                expected_version_reference=version_reference,
+            )
             self._refresh()
             return {"ok": True, "id": entry["id"], "key": key, **ergebnis}
 
@@ -223,13 +235,17 @@ class DecisionClicker:
                scope: str = "", evidenzanker: list[str] | None = None,
                gegenbelege: list[str] | None = None,
                fehlende_informationen: list[str] | None = None,
-               erstellt_von: str = "", kontext_fingerprint: str = "") -> dict:
+               erstellt_von: str = "", kontext_fingerprint: str = "",
+               status: str = "", optionen_version: str | int = "1",
+               empfehlung_version: str | int = "1", evidenzstand: str = "") -> dict:
         """Neue Entscheidung konventionsgemaess in die KETTE einstellen."""
         return _submit_proposal(
             self.settings, title, frage=frage, optionen=optionen, empfehlung=empfehlung,
             kontext=kontext, quelle=quelle, scope=scope, evidenzanker=evidenzanker,
             gegenbelege=gegenbelege, fehlende_informationen=fehlende_informationen,
             erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+            status=status, optionen_version=optionen_version,
+            empfehlung_version=empfehlung_version, evidenzstand=evidenzstand,
         )
 
     # ------------------------------------------------------------------
@@ -274,11 +290,15 @@ class ProposalSubmitter:
                scope: str = "", evidenzanker: list[str] | None = None,
                gegenbelege: list[str] | None = None,
                fehlende_informationen: list[str] | None = None,
-               erstellt_von: str = "", kontext_fingerprint: str = "") -> dict:
+               erstellt_von: str = "", kontext_fingerprint: str = "",
+               status: str = "", optionen_version: str | int = "1",
+               empfehlung_version: str | int = "1", evidenzstand: str = "") -> dict:
         return _submit_proposal(
             self._settings, title, frage=frage, optionen=optionen, empfehlung=empfehlung,
             kontext=kontext, quelle=quelle, scope=scope,
             evidenzanker=evidenzanker, gegenbelege=gegenbelege,
             fehlende_informationen=fehlende_informationen,
             erstellt_von=erstellt_von, kontext_fingerprint=kontext_fingerprint,
+            status=status, optionen_version=optionen_version,
+            empfehlung_version=empfehlung_version, evidenzstand=evidenzstand,
         )

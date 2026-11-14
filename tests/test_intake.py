@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from decision_clicker import chain, intake, writer
+from decision_clicker.chain_tools import materialize
 from decision_clicker.config import Settings
 
 OFFEN_ID = "D-20990806-001"       # im frischen Postfach: der offene Eintrag
@@ -203,3 +204,54 @@ def test_optionale_evidenzfelder_werden_synthetisch_geparst_und_uebernommen(
     assert "ERSTELLT VON: test-suite" in raw
     assert f"KONTEXT-FINGERPRINT: {fingerprint}" in raw
     assert "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]" in raw
+
+
+def test_klaerung_noetig_mit_ausgefuelltem_feld_wird_nie_als_entschieden_uebernommen(
+    tmp_path: Path, monkeypatch
+):
+    """PR #12 Review (Codex): KLÄRUNG NÖTIG ist nie entscheidbar — auch nicht über den Intake.
+
+    Ein Postfach-Eintrag mit diesem Status und ausgefülltem Entscheidungsfeld darf
+    nicht nach DECIDED-AND-DONE wandern und nicht als umgesetzt protokolliert werden.
+    Er wird als nicht klickbare Klärungsvorlage in die Kette übernommen; der
+    eingetragene Text bleibt im zitierten Originalwortlaut erhalten.
+    """
+    quelle = tmp_path / "synthetisches_postfach.txt"
+    quelle.write_text(
+        "D-20991231-902 — Klärung mit vorschnellem Entscheid\n\n"
+        "STATUS: KLÄRUNG NÖTIG\n\n"
+        "FRAGE: Welche Quelle gilt?\n\n"
+        "FEHLENDE INFORMATIONEN: Primärquelle fehlt\n\n"
+        "ENTSCHEIDUNG DES USERS: A — umgesetzt\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(intake, "DEFAULT_SOURCES", (quelle,))
+    # Aktuelle Kettenwerkzeuge (materialize), nicht die ältere Fixture-Kopie:
+    # nur sie klassifizieren KLÄRUNG NÖTIG.
+    root = tmp_path / "_DECISIONS"
+    materialize(root)
+    (root / "TO-DECIDE-USER.txt").write_text("", encoding="utf-8")
+    (root / "DECIDED-AND-DONE.md").write_text(
+        "# Synthetisches Entscheidungsregister\n", encoding="utf-8")
+    kette = Settings(chain_dir=root)
+    parsed = intake.parse(quelle)[0]
+    assert parsed.decided  # Vorbedingung: das Feld ist ausgefüllt
+
+    ergebnis = intake.takeover(kette, on="2026-11-14")
+
+    assert [e["entschieden"] for e in ergebnis] == [False]
+    assert ergebnis[0]["ziel"] != kette.done_file.name
+    done = kette.done_file.read_text(encoding="utf-8-sig")
+    assert parsed.entry_id not in done
+    assert "laut Eintrag umgesetzt" not in done
+    index = chain.build_index(kette)
+    eintrag = chain.find(index, parsed.entry_id)
+    assert eintrag["status_class"] == chain.STATUS_NEEDS_EVIDENCE
+    assert eintrag["needs_evidence"] is True
+    raw = next(
+        path.read_text(encoding="utf-8-sig")
+        for path in kette.chain_dir.glob("TO-DECIDE-USER*.txt")
+        if parsed.entry_id in path.read_text(encoding="utf-8-sig")
+    )
+    assert "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]" in raw
+    assert "A — umgesetzt" in raw  # zitierter Originalwortlaut, verlustfrei

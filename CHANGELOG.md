@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`needs_evidence` and versioned proposals (TASKPLAN #2163/#2164, ported from the diverged WORKSTATION-LG clone, T-20261114-339823777):** a candidate may carry `KLÄRUNG NÖTIG`/`needs_evidence`; it is visible in parser, index, CLI, API and UI but excluded from `open_entries()` and can never be answered or marked implemented. New proposals carry `OPTIONEN-VERSION`, `EMPFEHLUNG-VERSION` and `EVIDENZSTAND` (new `versioning.py`); the click receipt records the combined version reference, a click from a stale review page is rejected before any write (checked inside the Polaris transaction), and the DONE record and undo keep the exact provenance. Originally implemented by a TASKSOLVER run on 2026-09-20 that never reached `master`; conflicts with Polaris resolved additively.
 - **Polaris (Polarstern), P2:** Nur der Halter des Polaris star schreibt in die Kette (`star.py`: ServerStar per BACH-Lead und Geräte-Token, LocalStar nur für nicht geteilte Ketten, kein `off`). Choke-Point in `writer._write`/`_unlink`/`write_lock`/`release_lock`, Transaktionsjournal für `decide_entry`/`restore_decision`, Fence-Stempel `POLARIS-STAR:`, Manifest-Hash als Commit-Marker, Sicherungen außerhalb des Kettenordners. Details: `docs/POLARIS.md`.
 
 ### Changed

@@ -422,9 +422,10 @@ def render_takeover(entry: IntakeEntry, *, on: str | None = None, newline: str =
     stamp = on or datetime.now().strftime("%Y-%m-%d")
     herkunft = (f"`%OneDrive%\\Desktop\\{entry.path.name}` (Desktop-Intake), "
                 f"übernommen am {stamp} durch decision-clicker.")
+    status = writer.proposal_status(entry.fields.get("STATUS", ""))
     rows: list[str] = [
         f"{entry.entry_id} — {entry.title}", "",
-        f"STATUS: OFFEN — eingegangen via Desktop-Intake am {stamp}.",
+        f"STATUS: {status}",
         "SCOPE: global",
         f"QUELLE: {herkunft}",
     ]
@@ -451,6 +452,14 @@ def render_takeover(entry: IntakeEntry, *, on: str | None = None, newline: str =
                         "Kontext-Fingerprint muss sha256: gefolgt von 64 Hex-Zeichen sein."
                     )
             rows += ["", f"{name}: {value}"]
+    for name, default in (
+        ("OPTIONEN-VERSION", "1"),
+        ("EMPFEHLUNG-VERSION", "1"),
+        ("EVIDENZSTAND", entry.fields.get("KONTEXT-FINGERPRINT", "") or "UNBEKANNT"),
+    ):
+        value = entry.fields.get(name, default)
+        value = writer.single_line(value, name)
+        rows += ["", f"{name}: {value}"]
     rows += ["", "ORIGINALWORTLAUT AUS DEM DESKTOP-POSTFACH (unverändert, nur zitiert):"]
     rows += quote(entry.raw)
     rows += ["", "ENTSCHEIDUNG DES USERS: [HIER EINTRAGEN]", "", "---", ""]
@@ -481,24 +490,34 @@ def takeover(settings: Settings, *, dry_run: bool = False, on: str | None = None
 
     ergebnisse: list[dict] = []
     for eintrag in offene:
-        if not eintrag.decided and (not eintrag.frage.strip() or not eintrag.optionen):
+        needs_evidence = (
+            writer.proposal_status(eintrag.fields.get("STATUS", ""))
+            == writer.STATUS_NEEDS_EVIDENCE
+        )
+        # KLÄRUNG NÖTIG ist nie entscheidbar: Ein ausgefülltes Entscheidungsfeld macht
+        # den Eintrag nicht zum Beleg. Er wird als nicht klickbare Klärungsvorlage
+        # übernommen; der eingetragene Text bleibt im zitierten Originalwortlaut.
+        entschieden = eintrag.decided and not needs_evidence
+        if not entschieden and not needs_evidence and (
+            not eintrag.frage.strip() or not eintrag.optionen
+        ):
             raise writer.WriteError(
                 f"{eintrag.entry_id} ist im Postfach nicht entscheidungsreif "
                 "(Frage und Optionen sind erforderlich)."
             )
-        ziel = settings.done_file if eintrag.decided else chain.target_part(settings)
+        ziel = settings.done_file if entschieden else chain.target_part(settings)
         marker = (f"→ {TAKEN_MARK} ({stamp}) — dort als {eintrag.entry_id} in "
                   f"{ziel.name}; dieser Eintrag ist ab hier nur noch Historie.")
         eintrag_info = {
             "id": eintrag.entry_id, "titel": eintrag.title,
-            "entschieden": eintrag.decided, "ziel": ziel.name,
+            "entschieden": entschieden, "ziel": ziel.name,
             "quelle": str(eintrag.path), "marker": marker,
         }
         if dry_run:
             ergebnisse.append(eintrag_info)
             continue
 
-        if eintrag.decided:
+        if entschieden:
             writer.append_done_block(settings, render_done_takeover(eintrag, on=stamp))
         else:
             writer.append_entry(settings, ziel, render_takeover(eintrag, on=stamp))
