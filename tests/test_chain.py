@@ -302,3 +302,99 @@ def test_teil_claim_mit_fremdem_inhalt_bleibt_stehen(kette: Settings):
 
     assert writer._discard_partial_claim(kette.lock_file, b"LOCK \xe2\x80\x94 decision-clicker\n") is False
     assert kette.lock_file.read_bytes() == fremd
+
+
+def _fsync_hinterlaesst(kette: Settings, monkeypatch, zustand) -> None:
+    """Vor dem fsync-Fehler den Dateizustand herstellen, den der Aufraeumer vorfinden soll."""
+    import os
+
+    def fsync(fd):
+        zustand(fd)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(writer.time, "sleep", lambda _pause: None)
+
+
+@pytest.mark.parametrize("laenge", [0, 10])
+def test_echter_praefix_teil_claim_wird_entfernt(kette: Settings, monkeypatch, laenge: int):
+    import os
+
+    gesehen = []
+
+    def kuerzen(fd):
+        os.ftruncate(fd, laenge)
+        gesehen.append(kette.lock_file.stat().st_size)
+
+    _fsync_hinterlaesst(kette, monkeypatch, kuerzen)
+
+    with pytest.raises(writer.WriteError, match="Teil-Claim entfernt"):
+        writer.write_lock(kette, "Test")
+
+    assert gesehen == [laenge]  # der Aufraeumer fand wirklich nur 0 Bytes bzw. ein Praefix vor
+    assert not kette.lock_file.exists()
+    assert writer.foreign_locks(kette) == []
+
+
+def test_nicht_entfernbarer_teil_claim_wird_als_solcher_gemeldet(kette: Settings, monkeypatch):
+    fremd = b"LOCK -- replacement fixture\nAGENT: other-process\n"
+    _fsync_hinterlaesst(kette, monkeypatch, lambda _fd: kette.lock_file.write_bytes(fremd))
+
+    with pytest.raises(writer.WriteError, match="Teil-Claim NICHT entfernt, bitte prüfen"):
+        writer.write_lock(kette, "Test")
+
+    assert kette.lock_file.read_bytes() == fremd
+    assert writer.foreign_locks(kette) == [kette.lock_file]
+
+
+def _voruebergehend_gesperrt(kette: Settings, monkeypatch, methode: str, fehlversuche: int, danach=None) -> list:
+    """``Path.<methode>`` fuer die Sperrdatei zunaechst mit einer Sharing-Verletzung scheitern lassen."""
+    echt = getattr(Path, methode)
+    versuche = []
+
+    def gesperrt(self, *args, **kwargs):
+        if self == kette.lock_file and len(versuche) < fehlversuche:
+            versuche.append(methode)
+            if danach is not None and len(versuche) == fehlversuche:
+                danach()
+            raise PermissionError(13, "sharing violation")
+        return echt(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, methode, gesperrt)
+    monkeypatch.setattr(writer.time, "sleep", lambda _pause: None)
+    return versuche
+
+
+@pytest.mark.parametrize("methode", ["read_bytes", "unlink"])
+def test_teil_claim_wird_trotz_voruebergehender_sperre_entfernt(kette: Settings, monkeypatch, methode: str):
+    eigener = b"LOCK \xe2\x80\x94 decision-clicker\nCLAIM-ID: abc\n"
+    kette.lock_file.write_bytes(eigener[:10])
+    versuche = _voruebergehend_gesperrt(kette, monkeypatch, methode, 2)
+
+    assert writer._discard_partial_claim(kette.lock_file, eigener) is True
+
+    assert len(versuche) == 2
+    assert not kette.lock_file.exists()
+
+
+def test_dauerhaft_gesperrter_teil_claim_bleibt_gemeldet_stehen(kette: Settings, monkeypatch):
+    eigener = b"LOCK \xe2\x80\x94 decision-clicker\nCLAIM-ID: abc\n"
+    kette.lock_file.write_bytes(eigener[:10])
+    versuche = _voruebergehend_gesperrt(kette, monkeypatch, "unlink", 10**6)
+
+    assert writer._discard_partial_claim(kette.lock_file, eigener) is False
+
+    assert len(versuche) == len(writer._RETRY_PAUSES) + 1
+    assert kette.lock_file.read_bytes() == eigener[:10]
+
+
+def test_wiederholung_loescht_keinen_zwischenzeitlich_fremden_claim(kette: Settings, monkeypatch):
+    eigener = b"LOCK \xe2\x80\x94 decision-clicker\nCLAIM-ID: abc\n"
+    fremd = b"LOCK -- replacement fixture\nAGENT: other-process\n"
+    kette.lock_file.write_bytes(eigener[:10])
+    _voruebergehend_gesperrt(kette, monkeypatch, "unlink", 1,
+                             danach=lambda: kette.lock_file.write_bytes(fremd))
+
+    assert writer._discard_partial_claim(kette.lock_file, eigener) is False
+
+    assert kette.lock_file.read_bytes() == fremd
