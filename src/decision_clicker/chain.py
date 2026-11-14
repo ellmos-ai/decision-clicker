@@ -58,7 +58,10 @@ def _load_index_tool(script: Path) -> ModuleType:
         raise ChainError(f"Indexwerkzeug nicht ladbar: {script}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    # Quelle direkt kompilieren statt ueber exec_module: der Standard-Loader legt sonst ein
+    # __pycache__ im produktiven _DECISIONS/_tools ab und liest dort ein womoeglich veraltetes .pyc.
+    code = compile(script.read_bytes(), str(script), "exec")
+    exec(code, module.__dict__)  # noqa: S102 - bewusst: das Werkzeug ist die eine Quelle der Wahrheit
     return module
 
 
