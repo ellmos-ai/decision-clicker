@@ -60,7 +60,8 @@ def _load_index_tool(script: Path) -> ModuleType:
     sys.modules[spec.name] = module
     # Quelle direkt kompilieren statt ueber exec_module: der Standard-Loader legt sonst ein
     # __pycache__ im produktiven _DECISIONS/_tools ab und liest dort ein womoeglich veraltetes .pyc.
-    code = compile(script.read_bytes(), str(script), "exec")
+    # dont_inherit=True: sonst erbt das Werkzeug die __future__-Flags dieses Moduls (annotations).
+    code = compile(script.read_bytes(), str(script), "exec", dont_inherit=True)
     exec(code, module.__dict__)  # noqa: S102 - bewusst: das Werkzeug ist die eine Quelle der Wahrheit
     return module
 
