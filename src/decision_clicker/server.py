@@ -62,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "DecisionClicker/1.0"
     settings: Settings
     skipped: set[str]
-    confirmations: dict[str, tuple[int, str, str, float]] = {}
+    confirmations: dict[str, tuple[int, str, str, float, str]] = {}
 
     # -- Infrastruktur ----------------------------------------------------
     def log_message(self, fmt: str, *args) -> None:  # noqa: A002
@@ -192,7 +192,9 @@ class Handler(BaseHTTPRequestHandler):
             return f"Fremde Sperre im Entscheidungsordner aktiv ({namen}) — es wird nicht geschrieben."
         return ""
 
-    def _issue_confirmation(self, action: str, key: str) -> str:
+    def _issue_confirmation(
+        self, action: str, key: str, version_reference: str = "",
+    ) -> str:
         """Kurzlebige, einmal verwendbare Fähigkeit für einen gerenderten UI-Akt."""
         now = time.monotonic()
         for old_token, confirmation in list(self.confirmations.items()):
@@ -201,10 +203,14 @@ class Handler(BaseHTTPRequestHandler):
         while len(self.confirmations) >= 1024:
             self.confirmations.pop(next(iter(self.confirmations)))
         token = secrets.token_urlsafe(32)
-        self.confirmations[token] = (id(self.server), action, key, now + 300)
+        self.confirmations[token] = (
+            id(self.server), action, key, now + 300, version_reference,
+        )
         return token
 
-    def _require_confirmation(self, form: dict[str, str], action: str, key: str) -> None:
+    def _require_confirmation(
+        self, form: dict[str, str], action: str, key: str,
+    ) -> str:
         token = form.get("confirmation", "")
         expected = self.confirmations.pop(token, None) if token else None
         if (
@@ -216,6 +222,11 @@ class Handler(BaseHTTPRequestHandler):
                 "Diese Änderung braucht eine frische, aktionsgebundene Bestätigung "
                 "aus der menschlichen HTML-Oberfläche."
             )
+        expected_reference = expected[4]
+        submitted_reference = form.get("version_reference", "").strip()
+        if expected_reference and submitted_reference and submitted_reference != expected_reference:
+            raise RequestRejected("Die angezeigte Options-/Empfehlungs-Version ist veraltet.")
+        return expected_reference or submitted_reference
 
     # -- GET ---------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
@@ -233,8 +244,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             index = chain.build_index(self.settings)
             postfach = self._postfach(index)
-            self._send(ui.home(chain.counts(index), chain.open_entries(index), self._guard(),
-                               postfach, self._issue_confirmation("intake", "*") if postfach else ""))
+            self._send(ui.home(
+                chain.counts(index), chain.open_entries(index), self._guard(),
+                postfach, self._issue_confirmation("intake", "*") if postfach else "",
+                chain.needs_evidence_entries(index),
+            ))
         elif path == "/klick":
             self._klick(query)
         elif path == "/neu":
@@ -297,7 +311,10 @@ class Handler(BaseHTTPRequestHandler):
             roh = entry_text(self.settings, entry)
             entry = dict(entry, _raw=roh, _optionen=options_of(entry, roh))
         verbleibend = len([e for e in offen if e["key"] not in self.skipped])
-        confirmation = self._issue_confirmation("decide", entry["key"]) if entry else ""
+        confirmation = (
+            self._issue_confirmation("decide", entry["key"], entry.get("version_reference", ""))
+            if entry else ""
+        )
         self._send(ui.klick(entry, verbleibend, self._guard(), confirmation))
 
     def _register(self, suche: str) -> None:
@@ -326,8 +343,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
             with writer.MUTATION_LOCK:
                 if pfad == "/api/decide":
-                    self._require_confirmation(form, "decide", form.get("key", ""))
-                    self._decide(form)
+                    expected_reference = self._require_confirmation(
+                        form, "decide", form.get("key", ""))
+                    self._decide(form, expected_reference)
                 elif pfad == "/api/new":
                     self._new(form)
                 elif pfad == "/api/intake":
@@ -352,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(ui.meldung("Fehler", traceback.format_exc(limit=3), "/", "Übersicht"), 500)
 
     @_in_chain
-    def _decide(self, form: dict[str, str]) -> None:
+    def _decide(self, form: dict[str, str], confirmation_reference: str = "") -> None:
         if blocker := self._guard():
             raise writer.WriteError(blocker)
         key, choice = form.get("key", ""), form.get("choice", "").strip()
@@ -369,7 +387,12 @@ class Handler(BaseHTTPRequestHandler):
         note = form.get("note", "").strip()
         if entry.get("decision_ready") is not True:
             raise writer.WriteError(f"{key} ist nicht entscheidungsreif aktiv.")
-        ergebnis = writer.decide_entry(self.settings, entry, choice, note)
+        submitted_reference = form.get("version_reference", "").strip()
+        expected_reference = confirmation_reference or submitted_reference
+        ergebnis = writer.decide_entry(
+            self.settings, entry, choice, note,
+            expected_version_reference=expected_reference,
+        )
         self.skipped.discard(key)
         try:
             chain.refresh_artifacts(self.settings)
@@ -433,6 +456,7 @@ class Handler(BaseHTTPRequestHandler):
 
         rendered = writer.render_entry(
             entry_id, title,
+            status=writer.proposal_status(form.get("status", "")),
             quelle=form.get("quelle", "").strip(),
             frage=form.get("frage", "").strip(),
             optionen=optionen,
@@ -444,6 +468,9 @@ class Handler(BaseHTTPRequestHandler):
             fehlende_informationen=liste("fehlende_informationen"),
             erstellt_von=form.get("erstellt_von", "").strip(),
             kontext_fingerprint=form.get("kontext_fingerprint", "").strip(),
+            optionen_version=form.get("optionen_version", "1").strip() or "1",
+            empfehlung_version=form.get("empfehlung_version", "1").strip() or "1",
+            evidenzstand=form.get("evidenzstand", "").strip(),
         )
         ergebnis = writer.append_entry(self.settings, ziel, rendered)
         try:

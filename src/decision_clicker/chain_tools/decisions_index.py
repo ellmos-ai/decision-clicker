@@ -28,6 +28,7 @@ Aufruf:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -39,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 SCHEMA = "decisions.index/1"
 GENERATOR = f"decisions_index.py {VERSION}"
 
@@ -68,10 +69,18 @@ ARCHIVE_DIR = "_decision-archive"
 ACTIVE_NAME = "TO-DECIDE-USER.txt"
 
 STATUS_OPEN = "OFFEN"
+STATUS_NEEDS_EVIDENCE = "KLÄRUNG NÖTIG"
 STATUS_DECIDED_PENDING = "ENTSCHIEDEN_UMSETZUNG_OFFEN"
 STATUS_DONE = "DONE"
 STATUS_ARCHIVED = "ARCHIVIERT"
-STATUS_CLASSES = (STATUS_OPEN, STATUS_DECIDED_PENDING, STATUS_DONE, STATUS_ARCHIVED)
+STATUS_CLASSES = (
+    STATUS_OPEN, STATUS_NEEDS_EVIDENCE, STATUS_DECIDED_PENDING,
+    STATUS_DONE, STATUS_ARCHIVED,
+)
+_NEEDS_EVIDENCE_ALIASES = {
+    "needs_evidence", "needs evidence", "klärung nötig", "klaerung noetig",
+}
+_VERSION_RE = re.compile(r"^[1-9][0-9]*$")
 
 # --------------------------------------------------------------------------
 # Muster
@@ -109,6 +118,20 @@ FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
     "frage": re.compile(r"^FRAGE\b[^:]*:\s*(.*)$", re.I),
     "optionen": re.compile(r"^OPTIONEN\s*:\s*(.*)$", re.I),
     "empfehlung": re.compile(r"^EMPFEHLUNG\s*:\s*(.*)$", re.I),
+    "optionen_version": re.compile(
+        r"^(?:OPTIONEN[- ]?VERSION|OPTIONS[- ]?VERSION)\s*:\s*(.*)$", re.I),
+    "empfehlung_version": re.compile(
+        r"^(?:EMPFEHLUNG[- ]?VERSION|RECOMMENDATION[- ]?VERSION)\s*:\s*(.*)$", re.I),
+    "evidenzstand": re.compile(
+        r"^(?:EVIDENZSTAND|EVIDENCE[- ]?STATE)\s*:\s*(.*)$", re.I),
+    "version": re.compile(r"^VERSION\s*:\s*(.*)$", re.I),
+    "evidenzanker": re.compile(r"^EVIDENZANKER\s*:\s*(.*)$", re.I),
+    "gegenbelege": re.compile(r"^GEGENBELEGE\s*:\s*(.*)$", re.I),
+    "fehlende_informationen": re.compile(
+        r"^FEHLENDE\s+INFORMATIONEN\s*:\s*(.*)$", re.I),
+    "erstellt_von": re.compile(r"^ERSTELLT\s+VON\s*:\s*(.*)$", re.I),
+    "kontext_fingerprint": re.compile(
+        r"^KONTEXT[- ]?FINGERPRINT\s*:\s*(.*)$", re.I),
     "scope": re.compile(r"^SCOPE\s*:\s*(.*)$", re.I),
     "decision_kind": re.compile(r"^DECISION_KIND\s*:\s*(.*)$", re.I),
     # "ENTSCHEIDUNG DES USERS:" und Varianten wie "ENTSCHEIDUNG DES USERS E02:"
@@ -121,7 +144,11 @@ TERMINATOR_RE = re.compile(
     r"|UMSETZUNGSSTATUS|UMSETZUNGSHINWEIS|UMSETZUNGSGATE|VERBINDLICHE[^:]*"
     r"|HINWEIS|KORREKTUR|BETROFFEN|VORFALL|ALS ENTSCHIEDEN BELEGT|OFFEN"
     r"|OPTION\s+[A-Z]|KANONISCHE ID|ZUSATZABGRENZUNG|VERIFIZIERTER STAND"
-    r"|EMPFEHLUNG|QUELLE|STATUS|FRAGE|OPTIONEN|SCOPE|DECISION_KIND|ENTSCHIEDEN AM|ENTSCHEIDUNG)\s*[:\u2014-]",
+    r"|EMPFEHLUNG|OPTIONEN[- ]?VERSION|EMPFEHLUNG[- ]?VERSION"
+    r"|EVIDENZSTAND|EVIDENCE[- ]?STATE|VERSION|EVIDENZANKER|GEGENBELEGE"
+    r"|FEHLENDE\s+INFORMATIONEN|ERSTELLT\s+VON|KONTEXT[- ]?FINGERPRINT"
+    r"|QUELLE|STATUS|FRAGE|OPTIONEN|SCOPE|DECISION_KIND|ENTSCHIEDEN AM|ENTSCHEIDUNG)"
+    r"\s*[:—-]",
     re.I,
 )
 SEPARATOR_RE = re.compile(r"^\s*(-{3,}|={3,}|_{3,})\s*$")
@@ -141,6 +168,64 @@ HOST_FILE_RE = re.compile(r"^TO-DECIDE-USER-(?P<host>[A-Za-z0-9_-]+)\.txt$", re.
 PART_FILE_RE = re.compile(r"^TO-DECIDE-USER(?:_(?P<part>\d+))?\.txt$", re.I)
 
 MAX_EXCERPT = 400
+
+
+def status_is_needs_evidence(value: str) -> bool:
+    """Accept the machine name and the German display spelling."""
+    text = " ".join((value or "").split()).strip().casefold()
+    normalised = text.replace("_", " ").replace("-", " ")
+    return normalised in _NEEDS_EVIDENCE_ALIASES or normalised.startswith("klärung nötig") \
+        or normalised.startswith("klaerung noetig")
+
+
+def _safe_version(value: str, default: str = "1") -> tuple[str, bool]:
+    text = " ".join((value or "").split()).strip()
+    if not text:
+        return default, True
+    return (text, True) if _VERSION_RE.fullmatch(text) else ("UNGÜLTIG", False)
+
+
+def _field_fingerprint(value: str) -> str:
+    material = " ".join((value or "").split())
+    return "sha256:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def version_data(fields: dict[str, str]) -> dict[str, str | bool]:
+    """Resolve stable version/evidence values without rejecting old records."""
+    common = fields.get("version", "")
+    optionen_raw = fields.get("optionen_version", "") or common
+    empfehlung_raw = fields.get("empfehlung_version", "") or common
+    evidence_raw = (
+        fields.get("evidenzstand", "")
+        or fields.get("kontext_fingerprint", "")
+        or "UNBEKANNT"
+    )
+    optionen, opt_ok = _safe_version(optionen_raw)
+    empfehlung, empf_ok = _safe_version(empfehlung_raw)
+    evidence_text = str(evidence_raw or "").strip()
+    evidence_ok = "\n" not in evidence_text and "\r" not in evidence_text \
+        and ";" not in evidence_text
+    evidence = " ".join(evidence_text.split()).strip() or "UNBEKANNT"
+    if not evidence_ok:
+        evidence = "UNGÜLTIG"
+    optionen_fingerprint = _field_fingerprint(fields.get("optionen", ""))
+    empfehlung_fingerprint = _field_fingerprint(fields.get("empfehlung", ""))
+    return {
+        "optionen_version": optionen,
+        "empfehlung_version": empfehlung,
+        "evidenzstand": evidence,
+        "evidence_state": evidence,
+        "optionen_fingerprint": optionen_fingerprint,
+        "options_fingerprint": optionen_fingerprint,
+        "empfehlung_fingerprint": empfehlung_fingerprint,
+        "recommendation_fingerprint": empfehlung_fingerprint,
+        "version_reference": (
+            f"optionen=v{optionen};empfehlung=v{empfehlung};evidenzstand={evidence};"
+            f"optionen-inhalt={optionen_fingerprint};"
+            f"empfehlung-inhalt={empfehlung_fingerprint}"
+        ),
+        "version_valid": opt_ok and empf_ok and evidence_ok,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -172,6 +257,10 @@ class Entry:
         return not is_placeholder(self.decision_raw)
 
     @property
+    def needs_evidence(self) -> bool:
+        return status_is_needs_evidence(self.fields.get("status", ""))
+
+    @property
     def is_alias(self) -> bool:
         blob = f"{self.fields.get('status', '')} {self.title}".upper()
         return "MIGRATIONSALIAS" in blob
@@ -194,6 +283,8 @@ class Entry:
             return STATUS_ARCHIVED
         if self.domain == "done":
             return STATUS_DONE
+        if self.needs_evidence:
+            return STATUS_NEEDS_EVIDENCE
         return STATUS_DECIDED_PENDING if self.has_decision else STATUS_OPEN
 
     @property
@@ -202,10 +293,12 @@ class Entry:
         return (
             self.domain == "active"
             and not self.has_decision
+            and not self.needs_evidence
             and not self.is_alias
             and bool(self.fields.get("frage", "").strip())
             and bool(self.fields.get("optionen", "").strip())
             and "entscheidung" in self.fields
+            and bool(version_data(self.fields)["version_valid"])
         )
 
     def scope(self) -> tuple[str, bool]:
@@ -225,6 +318,7 @@ class Entry:
 
     def as_dict(self, root: Path) -> dict:
         scope, scope_explicit = self.scope()
+        versions = version_data(self.fields)
         return {
             "key": self.key,
             "id": self.entry_id,
@@ -234,6 +328,7 @@ class Entry:
             "question": excerpt(self.fields.get("frage", "")),
             "status_class": self.status_class(),
             "status_raw": excerpt(self.fields.get("status", "")),
+            "needs_evidence": self.needs_evidence,
             "scope": scope,
             "scope_explicit": scope_explicit,
             "decision_kind": self.fields.get("decision_kind", "").strip() or None,
@@ -241,6 +336,18 @@ class Entry:
             "decision_ready": self.decision_ready,
             "options_excerpt": excerpt(self.fields.get("optionen", "")),
             "recommendation_excerpt": excerpt(self.fields.get("empfehlung", "")),
+            "optionen_version": versions["optionen_version"],
+            "options_version": versions["optionen_version"],
+            "empfehlung_version": versions["empfehlung_version"],
+            "recommendation_version": versions["empfehlung_version"],
+            "evidenzstand": versions["evidenzstand"],
+            "evidence_state": versions["evidence_state"],
+            "optionen_fingerprint": versions["optionen_fingerprint"],
+            "options_fingerprint": versions["options_fingerprint"],
+            "empfehlung_fingerprint": versions["empfehlung_fingerprint"],
+            "recommendation_fingerprint": versions["recommendation_fingerprint"],
+            "version_reference": versions["version_reference"],
+            "version_valid": versions["version_valid"],
             "source_excerpt": excerpt(self.fields.get("quelle", ""), 200),
             "is_alias": self.is_alias,
             "alias_of": self.alias_of,
@@ -720,7 +827,9 @@ def build_index(root: Path) -> dict:
             + ", ".join(item["id"] for item in collisions)
         )
     for item in active_entries:
-        if not item["decision_ready"]:
+        if not item["decision_ready"] and not (
+            item["needs_evidence"] and item["version_valid"]
+        ):
             contract_errors.append(
                 f"Nicht entscheidungsreifer Aktiveintrag: {item['id']} "
                 f"({item['source_file']}:{item['source_line']})"
@@ -749,6 +858,9 @@ def build_index(root: Path) -> dict:
             "reserved_archive_ids": len(reserved_ids),
             "ignored_active_candidates": len(ignored) + len(swallowed),
             "active_decision_ready": sum(1 for item in active_entries if item["decision_ready"]),
+            "active_needs_evidence": sum(
+                1 for item in active_entries if item["needs_evidence"]
+            ),
             "active_contract_errors": len(contract_errors),
         },
         "collisions": collisions,
@@ -761,6 +873,7 @@ def render_report(index: dict) -> str:
     counts = index["counts"]
     entries = index["entries"]
     open_entries = [e for e in entries if e.get("decision_ready")]
+    needs_evidence = [e for e in entries if e.get("needs_evidence")]
     pending = [e for e in entries if e["status_class"] == STATUS_DECIDED_PENDING]
 
     lines = [
@@ -769,6 +882,7 @@ def render_report(index: dict) -> str:
         "> Auto-generiert von `decisions_index.py` — **nicht von Hand pflegen**.",
         "> Aktiv ist ausschliesslich `TO-DECIDE-USER.txt`; beantwortete Punkte",
         "> stehen nur noch in `DECIDED-AND-DONE.md` oder im reversiblen Archiv.",
+        "> Einträge mit `KLÄRUNG NÖTIG` bleiben sichtbar, sind aber nicht klickbar.",
         "",
         f"Stand: {index['generated_at']} · Generator: {index['generator']}",
         "",
@@ -777,18 +891,20 @@ def render_report(index: dict) -> str:
         "| Klasse | Anzahl |",
         "|---|---|",
         f"| {STATUS_OPEN} (echt offen) | {counts['by_status_class'][STATUS_OPEN]} |",
+        f"| {STATUS_NEEDS_EVIDENCE} | {counts['by_status_class'][STATUS_NEEDS_EVIDENCE]} |",
         f"| {STATUS_DECIDED_PENDING} | {counts['by_status_class'][STATUS_DECIDED_PENDING]} |",
         f"| {STATUS_DONE} | {counts['by_status_class'][STATUS_DONE]} |",
         f"| {STATUS_ARCHIVED} | {counts['by_status_class'][STATUS_ARCHIVED]} |",
         f"| **gesamt** | **{counts['total']}** |",
         "",
-        f"Aktives Dokument: {counts['active_chain']} entscheidungsreife Eintraege · "
+        f"Aktives Dokument: {counts['active_decision_ready']} entscheidungsreife Eintraege · "
+        f"{counts.get('active_needs_evidence', 0)} mit Klärungsbedarf · "
         f"ID-Kollisionen (aktive Kette): {counts['id_collisions']}",
         "",
         "## Aktivvertrag",
         "",
-        ("**GÜLTIG** — genau ein aktives Dokument, nur unbeantwortete und "
-         "entscheidungsreife Einträge."
+        ("**GÜLTIG** — genau ein aktives Dokument, nur unbeantwortete "
+         "entscheidungsreife oder ausdrücklich zurückgestellte Einträge."
          if index["active_contract"]["valid"] else "**UNGÜLTIG**"),
         "",
     ]
@@ -853,6 +969,18 @@ def render_report(index: dict) -> str:
         if item["recommendation_excerpt"]:
             lines.append(f"- Empfehlung: {item['recommendation_excerpt']}")
         lines.append("")
+
+    lines += ["## Klärung nötig — nicht klickbar", ""]
+    if not needs_evidence:
+        lines.append("_Keine._")
+    for item in needs_evidence:
+        lines += [
+            f"- **{item['key']}** — {item['title']} "
+            f"(`{item['source_file']}`:{item['source_line']})",
+            f"  Evidenzstand: `{item['evidenzstand']}` · "
+            f"Version: `{item['version_reference']}`",
+        ]
+    lines.append("")
 
     lines += ["## Historisch entschieden, Umsetzung offen", ""]
     if not pending:
@@ -980,6 +1108,7 @@ def main(argv: list[str] | None = None) -> int:
     counts = index["counts"]
     print(f"{counts['total']} Eintraege ({counts['active_chain']} aktiv) -> {out_dir}")
     print(f"  offen: {counts['by_status_class'][STATUS_OPEN]} · "
+          f"Klärung nötig: {counts['by_status_class'][STATUS_NEEDS_EVIDENCE]} · "
           f"entschieden/Umsetzung offen: {counts['by_status_class'][STATUS_DECIDED_PENDING]} · "
           f"done: {counts['by_status_class'][STATUS_DONE]} · "
           f"archiviert: {counts['by_status_class'][STATUS_ARCHIVED]}")

@@ -19,6 +19,7 @@ from types import ModuleType
 from .config import ACTIVE_DOCUMENT_WARNING_LINES, Settings
 
 STATUS_OPEN = "OFFEN"
+STATUS_NEEDS_EVIDENCE = "KLÄRUNG NÖTIG"
 STATUS_PENDING = "ENTSCHIEDEN_UMSETZUNG_OFFEN"
 STATUS_DONE = "DONE"
 STATUS_ARCHIVED = "ARCHIVIERT"
@@ -109,6 +110,15 @@ def open_entries(index: dict) -> list[dict]:
     items = [
         e for e in index["entries"]
         if e.get("decision_ready") is True
+    ]
+    return sorted(items, key=lambda e: (e["date"], e["id"]))
+
+
+def needs_evidence_entries(index: dict) -> list[dict]:
+    """Visible clarification entries; deliberately never clickable."""
+    items = [
+        e for e in index["entries"]
+        if e.get("status_class") == STATUS_NEEDS_EVIDENCE
     ]
     return sorted(items, key=lambda e: (e["date"], e["id"]))
 
@@ -226,6 +236,7 @@ def counts(index: dict) -> dict[str, int]:
     return {
         "offen": len(open_entries(index)),
         "offen_roh": by_status.get(STATUS_OPEN, 0),
+        "needs_evidence": by_status.get(STATUS_NEEDS_EVIDENCE, 0),
         "entschieden_offen": by_status.get(STATUS_PENDING, 0),
         "done": by_status.get(STATUS_DONE, 0),
         "archiviert": by_status.get(STATUS_ARCHIVED, 0),

@@ -49,7 +49,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     offen_postfach = intake.takeover(settings, dry_run=True)
     print(f"Kette: {settings.chain_dir}")
     print(f"  offen={werte['offen']} entschieden_offen={werte['entschieden_offen']} "
-          f"done={werte['done']} archiviert={werte['archiviert']} gesamt={werte['gesamt']}")
+          f"Klärung nötig={werte['needs_evidence']} done={werte['done']} "
+          f"archiviert={werte['archiviert']} gesamt={werte['gesamt']}")
     print(f"  nächste freie ID: {chain.next_id(index)}")
     print(f"  Ziel für neue Einträge: {chain.target_part(settings).name}")
     vertrag = index.get("active_contract", {})
@@ -73,13 +74,17 @@ def cmd_add(args: argparse.Namespace) -> int:
         entry_id = chain.next_id(index)
         ziel = chain.target_part(settings)
         rendered = writer.render_entry(
-            entry_id, args.title, quelle=args.quelle or "", frage=args.frage or "",
+            entry_id, args.title, status=writer.proposal_status(args.status or ""),
+            quelle=args.quelle or "", frage=args.frage or "",
             optionen=args.option or [], empfehlung=args.empfehlung or "",
             kontext=args.kontext or "", scope=args.scope or "",
             evidenzanker=args.evidenzanker or [], gegenbelege=args.gegenbeleg or [],
             fehlende_informationen=args.fehlende_information or [],
             erstellt_von=args.erstellt_von or "",
             kontext_fingerprint=args.kontext_fingerprint or "",
+            optionen_version=args.optionen_version or "1",
+            empfehlung_version=args.empfehlung_version or "1",
+            evidenzstand=args.evidenzstand or "",
         )
         if args.dry_run:
             print(rendered)
@@ -186,6 +191,13 @@ def main(argv: list[str] | None = None) -> int:
     p_add.add_argument("--option", action="append", metavar="'A — Text'",
                        help="Option; mehrfach angebbar")
     p_add.add_argument("--empfehlung")
+    p_add.add_argument(
+        "--status", choices=(writer.STATUS_OPEN, writer.STATUS_NEEDS_EVIDENCE, "needs_evidence"),
+        help="OFFEN oder KLÄRUNG NÖTIG; answered/done statuses are never accepted",
+    )
+    p_add.add_argument("--optionen-version", help="positive Version der Optionen")
+    p_add.add_argument("--empfehlung-version", help="positive Version der Empfehlung")
+    p_add.add_argument("--evidenzstand", help="stabiler Evidenzstand der betrachteten Version")
     p_add.add_argument("--kontext")
     p_add.add_argument("--quelle")
     p_add.add_argument("--scope", help="global | host:<name> | projekt:<pfad>")

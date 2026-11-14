@@ -118,6 +118,7 @@ def layout(title: str, body: str, active: str = "") -> bytes:
 def numbers(data: dict[str, int]) -> str:
     felder = [
         ("offen", "offen — zu klicken"),
+        ("needs_evidence", "Klärung nötig — nicht klickbar"),
         ("entschieden_offen", "entschieden, Umsetzung offen"),
         ("done", "erledigt"),
         ("archiviert", "archiviert"),
@@ -128,6 +129,40 @@ def numbers(data: dict[str, int]) -> str:
         for key, label in felder
     )
     return f'<div class="zahlen">{zellen}</div>'
+
+
+def version_meta(entry: dict) -> str:
+    """Show the exact proposal version carried by a human click form."""
+    reference = (entry.get("version_reference") or "").strip()
+    if not reference:
+        return ""
+    optionen = escape(str(entry.get("optionen_version", "1")))
+    empfehlung = escape(str(entry.get("empfehlung_version", "1")))
+    evidenzstand = escape(str(entry.get("evidenzstand", "UNBEKANNT")))
+    return (
+        f'<div class="meta">Betrachtete Version: Optionen v{optionen} · '
+        f'Empfehlung v{empfehlung} · Evidenzstand <code>{evidenzstand}</code></div>'
+    )
+
+
+def _needs_evidence_table(entries: list[dict]) -> str:
+    if not entries:
+        return ""
+    rows = "".join(
+        f'<tr><td><code>{escape(e["key"])}</code></td>'
+        f'<td>{escape(e["title"])}</td>'
+        f'<td><span class="tag">Klärung nötig</span></td>'
+        f'<td><code>{escape(e.get("evidenzstand", "UNBEKANNT"))}</code></td></tr>'
+        for e in entries
+    )
+    return (
+        '<div class="card"><h2>Klärung nötig</h2>'
+        '<p class="hint">Diese Vorlagen bleiben sichtbar, sind aber nicht klickbar, '
+        'bis die Evidenzlücke oder der Widerspruch geklärt ist.</p>'
+        '<div class="table-wrap"><table><tr><th>ID</th><th>Titel</th>'
+        '<th>Status</th><th>Evidenzstand</th></tr>'
+        f"{rows}</table></div></div>"
+    )
 
 
 def intake_banner(offene: list[dict], confirmation: str = "") -> str:
@@ -150,7 +185,8 @@ def intake_banner(offene: list[dict], confirmation: str = "") -> str:
 
 
 def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
-         postfach: list[dict] | None = None, intake_confirmation: str = "") -> bytes:
+         postfach: list[dict] | None = None, intake_confirmation: str = "",
+         klaerung: list[dict] | None = None) -> bytes:
     kopf = f'<div class="warn">{escape(hinweis)}</div>' if hinweis else ""
     kopf += intake_banner(postfach or [], intake_confirmation)
     if offen:
@@ -170,6 +206,7 @@ def home(data: dict[str, int], offen: list[dict], hinweis: str = "",
     body = (
         f"{kopf}<h1>Übersicht</h1>{numbers(data)}"
         f'<div class="card"><h2>Offene Entscheidungen</h2>{tabelle}</div>'
+        f"{_needs_evidence_table(klaerung or [])}"
     )
     return layout("Übersicht", body, "home")
 
@@ -286,11 +323,13 @@ def klick(entry: dict | None, rest: int, hinweis: str = "", confirmation: str = 
 <div class="meta"><code>{escape(entry["key"])}</code> · {escape(entry["date"])} ·
 Quelle: <code>{escape(entry["source_file"])}</code>, Zeile {entry["source_line"]} ·
 noch {rest} offen</div>
+{version_meta(entry)}
 <div class="card"><h2>Kontext (gebündelte Vorlage)</h2><div class="kontext">{escape(kontext)}</div></div>
 {"".join(sub_kacheln)}
 <form method="post" action="/api/decide" class="card">
 <input type="hidden" name="key" value="{escape(entry["key"])}">
 <input type="hidden" name="confirmation" value="{escape(confirmation)}">
+<input type="hidden" name="version_reference" value="{escape(entry.get("version_reference", ""))}">
 {form_inhalt}
 <label>Anmerkung <span class="hint">(optional, wird mit eingetragen)</span></label>
 <textarea name="note" rows="2" placeholder="Begründung, Einschränkung, Auflage …"></textarea>
@@ -324,11 +363,13 @@ noch {rest} offen</div>
 <div class="meta"><code>{escape(entry["key"])}</code> · {escape(entry["date"])} ·
 Quelle: <code>{escape(entry["source_file"])}</code>, Zeile {entry["source_line"]} ·
 noch {rest} offen</div>
+{version_meta(entry)}
 <div class="card"><h2>Kontext</h2><div class="kontext">{escape(kontext)}</div></div>
 {empf_block}
 <form method="post" action="/api/decide" class="card">
 <input type="hidden" name="key" value="{escape(entry["key"])}">
 <input type="hidden" name="confirmation" value="{escape(confirmation)}">
+<input type="hidden" name="version_reference" value="{escape(entry.get("version_reference", ""))}">
 <h2>Entscheidung</h2>{knoepfe}
 <label>Anmerkung <span class="hint">(optional, wird mit eingetragen)</span></label>
 <textarea name="note" rows="2" placeholder="Begründung, Einschränkung, Auflage …"></textarea>
@@ -415,6 +456,15 @@ Ziel: <code>{escape(ziel)}</code></div>
 <textarea name="optionen" rows="4" required placeholder="A — …&#10;B — …"></textarea>
 <label>Empfehlung</label>
 <input name="empfehlung" placeholder="A — weil …">
+<label>Status <span class="hint">(Klärung nötig bleibt sichtbar und nicht klickbar)</span></label>
+<select name="status"><option value="OFFEN">OFFEN — zur menschlichen Entscheidung</option>
+<option value="KLÄRUNG NÖTIG">KLÄRUNG NÖTIG — Evidenz erst klären</option></select>
+<label>Optionen-Version <span class="hint">(positive ganze Zahl)</span></label>
+<input name="optionen_version" value="1" inputmode="numeric">
+<label>Empfehlungs-Version <span class="hint">(positive ganze Zahl)</span></label>
+<input name="empfehlung_version" value="1" inputmode="numeric">
+<label>Evidenzstand <span class="hint">(optional; ohne Angabe wird ein stabiler Fingerabdruck erzeugt)</span></label>
+<input name="evidenzstand" placeholder="z. B. sha256:… oder Review-Stand 2026-09-20">
 <label>Quelle <span class="hint">(Datei, Lauf, Briefing)</span></label>
 <input name="quelle">
 <label>Evidenzanker <span class="hint">(optional, je Zeile eine stabile Fundstelle)</span></label>
