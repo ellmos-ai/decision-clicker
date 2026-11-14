@@ -1019,23 +1019,22 @@ def _discard_partial_claim(path: Path, claim: bytes) -> bool:
     """Einen unvollstaendig geschriebenen eigenen Claim entfernen.
 
     Geloescht wird nur, wenn die Datei hoechstens die eigenen Claim-Bytes (als Praefix) enthaelt;
-    ein zwischenzeitlich ersetzter Inhalt bleibt fail-closed stehen.
+    ein zwischenzeitlich ersetzter Inhalt bleibt fail-closed stehen. Voruebergehende
+    Sharing-Verletzungen (Cloud-Sync, Watcher) werden wie in ``_write`` wiederholt; der Inhalt
+    wird vor jedem Loeschversuch neu geprueft.
     """
-    try:
-        current = path.read_bytes()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    if not claim.startswith(current):
-        return False
-    try:
+    def attempt() -> bool:
+        if not claim.startswith(path.read_bytes()):
+            return False
         path.unlink()
+        return True
+
+    try:
+        return _retry(attempt)
     except FileNotFoundError:
         return True
     except OSError:
         return False
-    return True
 
 
 @_chain_op
