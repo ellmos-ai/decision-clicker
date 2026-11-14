@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - **Polaris (Polarstern), P2:** Nur der Halter des Polaris star schreibt in die Kette (`star.py`: ServerStar per BACH-Lead und Geräte-Token, LocalStar nur für nicht geteilte Ketten, kein `off`). Choke-Point in `writer._write`/`_unlink`/`write_lock`/`release_lock`, Transaktionsjournal für `decide_entry`/`restore_decision`, Fence-Stempel `POLARIS-STAR:`, Manifest-Hash als Commit-Marker, Sicherungen außerhalb des Kettenordners. Details: `docs/POLARIS.md`.
+
 ### Fixed
 
 - A failed or interrupted lock write no longer leaves an orphaned, unregistered
