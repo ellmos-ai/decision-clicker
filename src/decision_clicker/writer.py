@@ -991,16 +991,51 @@ def write_lock(settings: Settings, purpose: str, hours: int = 24) -> Path:
     _guard(settings, path)  # Polaris-Choke-Point: ohne gueltigen star nur lesbar
     with MUTATION_LOCK:
         try:
-            with path.open("xb") as handle:
-                handle.write(claim)
-                handle.flush()
-                os.fsync(handle.fileno())
+            handle = path.open("xb")
         except FileExistsError as exc:
             raise WriteError(f"Sperre bereits vorhanden; keine Übernahme: {path}") from exc
         except OSError as exc:
             raise WriteError(f"Sperre konnte nicht exklusiv angelegt werden: {path}: {exc}") from exc
+        try:
+            with handle:
+                handle.write(claim)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException as exc:
+            # Die Datei stammt nachweislich von hier (exklusiv angelegt), ist aber noch nicht als
+            # eigener Claim registriert: ohne Aufraeumen bliebe sie als "fremde" gleichnamige Sperre
+            # liegen, die release_lock verweigert und jeden Clicker-Schreibweg blockiert.
+            removed = _discard_partial_claim(path, claim)
+            if isinstance(exc, OSError):
+                rest = "Teil-Claim entfernt" if removed else "Teil-Claim NICHT entfernt, bitte prüfen"
+                raise WriteError(f"Sperre konnte nicht vollständig geschrieben werden ({rest}): "
+                                 f"{path}: {exc}") from exc
+            raise
         _OWNED_LOCKS[path.resolve(strict=False)] = claim
     return path
+
+
+def _discard_partial_claim(path: Path, claim: bytes) -> bool:
+    """Einen unvollstaendig geschriebenen eigenen Claim entfernen.
+
+    Geloescht wird nur, wenn die Datei hoechstens die eigenen Claim-Bytes (als Praefix) enthaelt;
+    ein zwischenzeitlich ersetzter Inhalt bleibt fail-closed stehen.
+    """
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if not claim.startswith(current):
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 @_chain_op
