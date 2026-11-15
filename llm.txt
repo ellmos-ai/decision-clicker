@@ -1,0 +1,12 @@
+# Decision Clicker — LLM Entry Point Pointer
+
+> Canonical machine-readable index: see [`llms.txt`](llms.txt)
+> Agent integration & workflow skill: see [`SKILL.md`](SKILL.md)
+> Bilingual documentation: [`README.md`](README.md) · [`README_de.md`](README_de.md)
+
+Quick install & verify:
+```bash
+git clone https://github.com/ellmos-ai/decision-clicker.git && cd decision-clicker
+python -m pip install .
+decision-clicker --help
+```

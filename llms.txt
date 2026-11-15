@@ -3,28 +3,66 @@
 > Local-first Python library, CLI, and mini UI for file-based decision chains.
 
 - **Version:** 1.1.2
-- **Status:** Active (Pfad B Discoverability, 15-Point Quick Nav & Security Guardrails)
-- **Last-Checked:** 2026-09-16
-- **Verified Tests:** 236 passed | 100% green
+- **Status:** Active (Pfad B Discoverability, Policy P-022 Agentic Readiness & Visual UI Gallery)
+- **Last-Checked:** 2026-11-15
+- **Verified Tests:** 405 passed | 100% green
 - **License:** MIT (SPDX-License-Identifier: MIT)
 - **Ecosystem:** [ellmos-ai](https://github.com/ellmos-ai) · [open-bricks Umbrella](https://github.com/open-bricks)
 
+## Install & Quickstart Guide (LLM / Operator)
+
+### 1. Requirements
+- Python `>=3.10,<3.14` (100% Python standard library at runtime; zero external runtime dependencies).
+- Platforms: Windows, Linux, macOS (`RunAsInvoker` / unprivileged user space).
+- Dev tooling (optional, for tests/lint): `pytest>=9,<10`, `ruff>=0.12,<1`, `build>=1.2,<2`, `setuptools>=77`.
+
+### 2. Installation Command
+```bash
+git clone https://github.com/ellmos-ai/decision-clicker.git
+cd decision-clicker
+python -m pip install -e ".[dev]"   # or `python -m pip install .` for runtime only
+```
+
+### 3. Verification Command
+```bash
+decision-clicker --help
+python -m pytest -ra -v
+```
+
+### 4. Minimal Usage Example (Submit Proposal Safely)
+```python
+from pathlib import Path
+from decision_clicker.api import ProposalSubmitter
+
+submitter = ProposalSubmitter(Path("tests/data/chain"))
+entries = submitter  # Agents propose open items; human operator decides via HTML UI or DecisionClicker
+```
+Or inspect a chain read-only via CLI:
+```bash
+decision-clicker --check --chain tests/data/chain
+```
+
 ## Canonical Documentation
 
-- `README.md`: English usage, visual architecture diagrams, and specification.
+- `README.md`: English usage, screenshots, visual architecture diagrams, and specification.
 - `README_de.md` / `README.de.md`: Synchronized German guide and architecture documentation.
-- `SECURITY.md`: Bilingual security policy with 48h response SLA, 5-day triage, and contacts.
+- `SKILL.md`: Agent-executable workflow skill with safety gates and CLI/API patterns.
+- `llm.txt`: Compatibility pointer redirecting to `llms.txt` and `SKILL.md`.
+- `SECURITY.md`: Bilingual security policy with 48h response SLA, 5-day triage, 30-day fix, and contacts.
 - `PRIVACY.md`: Data handling, synthetic fixtures, and zero-egress policy.
+- `CODE_OF_CONDUCT.md`: Bilingual Contributor Covenant v2.1 guidelines.
 - `THIRD_PARTY_LICENSES.md`: Inventory confirming zero external runtime dependencies.
-- `MARKETING-LOG.txt`: Local marketing, discoverability, and architecture audit log.
 - `CONTRIBUTING.md`: Development guidelines and review rules.
 - `CHANGELOG.md`: Chronological version history.
 
 ## Code Map
 
-- `src/decision_clicker/api.py`: UI-independent integration facade and DecisionClicker class.
+- `src/decision_clicker/api.py`: UI-independent integration facade (`DecisionClicker` for human UI, `ProposalSubmitter` for AI/automation).
 - `src/decision_clicker/chain.py`: Adapter to canonical external parser (`_tools/decisions_index.py`).
-- `src/decision_clicker/writer.py`: Guarded byte-preserving writes, backups, and undo operations.
+- `src/decision_clicker/writer.py`: Guarded byte-preserving writes, backups, Polaris choke-point, and undo operations.
+- `src/decision_clicker/versioning.py`: Option/recommendation versioning (`OPTIONEN-VERSION`, `EMPFEHLUNG-VERSION`, `EVIDENZSTAND`) and stale-click rejection.
+- `src/decision_clicker/star.py`: Polaris single-writer star arbitration (`ServerStar` / `LocalStar`).
+- `src/decision_clicker/journal.py`: Transaction journal for `decide_entry` and `restore_decision`.
 - `src/decision_clicker/intake.py`: Optional legacy inbox parser and desktop takeover.
 - `src/decision_clicker/server.py`: Localhost loopback HTTP mini-server (`127.0.0.1:8096`).
 - `src/decision_clicker/ui.py`: HTML rendering for the review and click interface.

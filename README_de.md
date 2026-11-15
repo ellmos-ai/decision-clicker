@@ -6,19 +6,19 @@
 
 [![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-236%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-405%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
 [![Security](https://img.shields.io/badge/security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg)](SECURITY.md)
 [![Security SLA](https://img.shields.io/badge/security--SLA-48h%20Response%20%7C%205d%20Triage%20%7C%2030d%20Fix-informational.svg)](SECURITY.md)
 [![Third-Party](https://img.shields.io/badge/third--party-audited%20%7C%20zero%20dependencies-green.svg)](THIRD_PARTY_LICENSES.md)
-[![Marketing Log](https://img.shields.io/badge/marketing%20log-active-blue.svg)](MARKETING-LOG.txt)
+[![Agent Skill](https://img.shields.io/badge/skill-SKILL.md-teal.svg)](SKILL.md)
 [![Code Style](https://img.shields.io/badge/code%20style-Ruff-black.svg)](pyproject.toml)
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--16-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--15-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker ist eine Local-First Python-Bibliothek, ein CLI-Tool und eine leichtgewichtige Web-Oberfläche für dateibasierte Human-in-the-Loop Entscheidungsketten. Sie bietet menschlichen Bedienern und autonomen Agenten-Flotten einen deterministischen, fehlertoleranten Arbeitsablauf zur Einstellung, Prüfung, Dokumentation, Revision und reversiblen Rücknahme von Governance-Entscheidungen – ohne Notwendigkeit einer zentralen Datenbank.
@@ -230,6 +230,14 @@ python -m pip install -e ".[dev]"
 python -m pip install .
 ```
 
+### Mit deinem LLM installieren
+
+Kopiere den folgenden Prompt in Claude Code, Codex, Gemini oder deinen bevorzugten KI-Agenten:
+
+```text
+Lies https://github.com/ellmos-ai/decision-clicker/blob/master/llms.txt und SKILL.md, klone das Repository lokal, installiere `decision-clicker` in einer virtuellen Umgebung (`python -m pip install .`), verifiziere mit `decision-clicker --help` sowie `decision-clicker --check --chain tests/data/chain` und berichte die verfügbaren CLI- und Vorschlags-Schnittstellen, ohne eine produktive Entscheidungskette zu verändern.
+```
+
 ---
 
 ## 7. Konfiguration & Umgebungsvariablen
@@ -289,10 +297,10 @@ decision-clicker add "Auswahl der Rollout-Strategie" \
 
 Entfernen Sie `--dry-run`, um den Eintrag direkt in `TO-DECIDE-USER.txt` einzufügen.
 
-### Postfach-Einträge übernehmen (Takeover)
+### Postfach-Einträge übernehmen (Intake)
 
 ```bash
-decision-clicker takeover
+decision-clicker intake
 ```
 
 Liest Einträge aus dem Desktop-Postfach ein und überführt sie idempotent in die kanonische Kette.
@@ -300,6 +308,18 @@ Liest Einträge aus dem Desktop-Postfach ein und überführt sie idempotent in d
 ---
 
 ## 9. HTTP Mini-Server & Web-UI
+
+### Visuelle UI-Übersicht
+
+Direkt aus dem eingebauten Zero-Dependency-Loopback-Server gegen die synthetische Test-Fixture (`tests/data/chain`) gerendert:
+
+| Übersicht (`/`) | Einzelansicht Durchklicken (`/klick`) |
+|---|---|
+| ![Decision Clicker Übersicht](README/screenshots/dashboard_overview.png) | ![Decision Clicker Durchklicken](README/screenshots/klick_decision_view.png) |
+
+| Formular Neue Entscheidung (`/neu`) |
+|---|
+| ![Decision Clicker Formular](README/screenshots/new_proposal_view.png) |
 
 Übersicht über die bereitgestellten Endpunkte:
 
@@ -361,26 +381,27 @@ from decision_clicker.api import DecisionClicker
 clicker = DecisionClicker(Path("C:/_Local_DEV/chains/_DECISIONS"))
 
 # 1. Offene Entscheidungen abrufen
-offene = clicker.open_decisions()
+offene = clicker.open_entries()
 print(f"Offene Entscheidungen: {len(offene)}")
 
 for item in offene:
-    print(f"[{item['id']}] {item['title']}")
-    for opt in item.get("options", []):
+    detail = clicker.detail(item["id"])
+    print(f"[{detail['id']}] {detail['title']}")
+    for opt in detail.get("optionen", []):
         print(f"  - Option {opt['letter']}: {opt['text']}")
 
 # 2. Entscheidung fällen
 if offene:
     ziel = offene[0]
     clicker.decide(
-        key=ziel["key"],
+        key=ziel["id"],
         choice="A",
         note="Ausgewählt während der Systemvalidierung."
     )
     print(f"Entscheidung für {ziel['id']} dokumentiert.")
 
 # 3. Bei Bedarf zurücksetzen
-# clicker.undo(ziel["key"])
+# clicker.undo(ziel["id"])
 ```
 
 ---
@@ -428,7 +449,7 @@ Vor jedem Release durchläuft Decision Clicker strenge Prüfungen:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 Syntaxfehler unter Python 3.10–3.13. |
 | **Linting & Stil** | `ruff check` | Gesamtes Repository | 0 Warnungen, vollständige PEP 8 Konformität. |
-| **Unit & Integration** | `pytest` | `tests/` | 156 bestandene Tests (100% grün). |
+| **Unit & Integration** | `pytest` | `tests/` | 405 bestandene Tests (100% grün). |
 | **Metadaten-Parität** | `tests/test_metadata.py` | Badges, PEP 621, Invarianten | Vertragstests verifizieren Dokumentation und SLAs. |
 | **Paketierung** | `python -m build` | Quell- & Wheel-Paket | Saubere Erstellung ohne Fehler. |
 
@@ -437,7 +458,7 @@ Vollständige Prüfung lokal ausführen:
 ```bash
 python -m compileall -q src tests
 python -m ruff check .
-python -m pytest -v
+python -m pytest -ra -v
 python -m build
 ```
 
@@ -445,12 +466,12 @@ python -m build
 
 ## 14. Maschinenlesbarer LLM-Kontext
 
-Für KI-Agenten steht [llms.txt](llms.txt) mit komprimierter Code-Struktur, Invarianten-Übersicht und Schnittstellendefinitionen bereit. Modulmetadaten sind in `ellmos-module.v2.json` hinterlegt.
+Für KI-Agenten stehen [llms.txt](llms.txt) (sowie der Kompatibilitätszeiger [llm.txt](llm.txt)) und der Produkt-Skill [SKILL.md](SKILL.md) mit komprimierter Code-Struktur, Invarianten-Übersicht und Schnittstellendefinitionen bereit. Modulmetadaten sind in `ellmos-module.v2.json` hinterlegt.
 
 ---
 
 ## 15. Beiträge & Lizenz
 
-Beiträge sind herzlich willkommen! Bitte beachten Sie [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md) und [SECURITY.md](SECURITY.md).
+Beiträge sind herzlich willkommen! Bitte beachten Sie [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [PRIVACY.md](PRIVACY.md) und [SECURITY.md](SECURITY.md).
 
 Lizenziert unter der **MIT-Lizenz**. Vollständiger Text in [LICENSE](LICENSE). Dritte-Partei-Lizenzen sind in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) dokumentiert.
