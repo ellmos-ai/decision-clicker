@@ -40,11 +40,13 @@ def test_pep621_project_urls():
         "Security",
         "Issues",
         "Third-Party Licenses",
-        "Marketing Log",
+        "Code of Conduct",
+        "Agent Skill",
         "LLM Ready",
         "Parent Organization",
         "Umbrella Ecosystem",
     ]
+    assert "Marketing Log" not in urls, "MARKETING-LOG.txt must not be published in project URLs"
     for key in required_keys:
         assert key in urls, f"Missing project URL key: {key}"
         assert urls[key].startswith("https://github.com/"), f"URL for {key} must start with https://github.com/"
@@ -147,17 +149,17 @@ def test_readme_badges_suite():
     expected_badges = [
         "version-1.1.2-blue.svg",
         "CI-passing-brightgreen.svg",
-        "tests-236%20passed%20%7C%20100%25-brightgreen.svg",
+        "tests-405%20passed%20%7C%20100%25-brightgreen.svg",
         "privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg",
         "security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg",
         "security--SLA-48h%20Response%20%7C%205d%20Triage%20%7C%2030d%20Fix-informational.svg",
         "third--party-audited%20%7C%20zero%20dependencies-green.svg",
-        "marketing%20log-active-blue.svg",
+        "skill-SKILL.md-teal.svg",
         "code%20style-Ruff-black.svg",
         "ecosystem-ellmos--ai-purple.svg",
         "umbrella-open--bricks-orange.svg",
         "LLM-llms.txt-blueviolet.svg",
-        "last%20checked-2026--09--16-informational.svg",
+        "last%20checked-2026--11--15-informational.svg",
         "license-MIT-green.svg",
     ]
     for badge in expected_badges:
@@ -221,7 +223,7 @@ def test_sibling_ecosystem_matrix():
 def test_llms_txt_freshness_and_parity():
     """Verify llms.txt is up to date with version 1.1.2 and recent timestamp."""
     llms_text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-    assert "2026-09-16" in llms_text
+    assert "2026-11-15" in llms_text
     assert "1.1.2" in llms_text
     assert "decision_clicker/api.py" in llms_text
     assert "decision_clicker/writer.py" in llms_text
@@ -312,17 +314,60 @@ def test_third_party_licenses_audit_and_invariants():
     assert "INV-LOCK-08" in content
 
 
-def test_marketing_log_milestone_and_personas():
-    """Verify MARKETING-LOG.txt contains the latest Pfad B milestone and 4 target personas."""
-    mkt_path = ROOT / "MARKETING-LOG.txt"
-    assert mkt_path.is_file(), "MARKETING-LOG.txt must exist"
-    content = mkt_path.read_text(encoding="utf-8")
-    assert "[2026-09-12 11:00 CEST] [PFAD_B_DISCOVERABILITY_AND_DESIGN]" in content
-    assert "Autonomous Agent Fleet Operators" in content
-    assert "DevOps, SRE" in content
-    assert "Privacy-Conscious Enterprise AI" in content
-    assert "Local-First Desktop" in content
-    assert "5-WAY COMPETITIVE MATRIX" in content
+def test_marketing_log_untracked_and_ignored():
+    """Verify MARKETING-LOG.txt is excluded from git tracking, manifests, and public docs."""
+    gitignore_text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    manifest_text = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "*MARKETING-LOG.txt" in gitignore_text
+    assert "MARKETING-LOG.txt" not in manifest_text
+    assert "MARKETING-LOG.txt" not in readme_text
+
+
+def test_policy_p022_agentic_readiness():
+    """Verify Policy P-022 deliverables: SKILL.md, llm.txt, llms.txt 4-point guide, and README LLM prompt."""
+    skill_path = ROOT / "SKILL.md"
+    llm_pointer_path = ROOT / "llm.txt"
+    llms_path = ROOT / "llms.txt"
+    assert skill_path.is_file()
+    assert llm_pointer_path.is_file()
+    assert llms_path.is_file()
+
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "name: decision-clicker" in skill_text
+    assert "ProposalSubmitter" in skill_text
+
+    llms_text = llms_path.read_text(encoding="utf-8")
+    for marker in ("Requirements", "Installation Command", "Verification Command", "Minimal Usage Example"):
+        assert marker in llms_text
+
+    readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_de = (ROOT / "README_de.md").read_text(encoding="utf-8")
+    assert "### Install with your LLM" in readme_en
+    assert "### Mit deinem LLM installieren" in readme_de
+    assert "```text" in readme_en and "```text" in readme_de
+
+
+def test_community_health_and_ui_screenshots():
+    """Verify bilingual Code of Conduct, issue templates, and rendered UI screenshots."""
+    coc_path = ROOT / "CODE_OF_CONDUCT.md"
+    assert coc_path.is_file()
+    coc_text = coc_path.read_text(encoding="utf-8")
+    assert "Contributor Covenant" in coc_text
+    assert "Verhaltenskodex" in coc_text
+
+    for rel in (
+        ".github/ISSUE_TEMPLATE/bug_report.md",
+        ".github/ISSUE_TEMPLATE/feature_request.md",
+        ".github/ISSUE_TEMPLATE/config.yml",
+    ):
+        assert (ROOT / rel).is_file(), f"Missing community template: {rel}"
+
+    readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
+    for shot in ("dashboard_overview.png", "klick_decision_view.png", "new_proposal_view.png"):
+        shot_path = ROOT / "README" / "screenshots" / shot
+        assert shot_path.is_file() and shot_path.stat().st_size > 1000
+        assert f"README/screenshots/{shot}" in readme_en
 
 
 def test_module_manifest_version_parity():

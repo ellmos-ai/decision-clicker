@@ -6,19 +6,19 @@
 
 [![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-236%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-405%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
 [![Security](https://img.shields.io/badge/security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg)](SECURITY.md)
 [![Security SLA](https://img.shields.io/badge/security--SLA-48h%20Response%20%7C%205d%20Triage%20%7C%2030d%20Fix-informational.svg)](SECURITY.md)
 [![Third-Party](https://img.shields.io/badge/third--party-audited%20%7C%20zero%20dependencies-green.svg)](THIRD_PARTY_LICENSES.md)
-[![Marketing Log](https://img.shields.io/badge/marketing%20log-active-blue.svg)](MARKETING-LOG.txt)
+[![Agent Skill](https://img.shields.io/badge/skill-SKILL.md-teal.svg)](SKILL.md)
 [![Code Style](https://img.shields.io/badge/code%20style-Ruff-black.svg)](pyproject.toml)
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--09--16-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--15-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker is a local-first Python library, CLI tool, and lightweight web UI for file-based human-in-the-loop decision chains. It provides human operators and autonomous agent fleets with a bulletproof, deterministic workflow to queue, review, record, audit, and reversibly undo governance decisions without moving the source of truth into an external database.
@@ -230,6 +230,14 @@ python -m pip install -e ".[dev]"
 python -m pip install .
 ```
 
+### Install with your LLM
+
+Copy the prompt below into Claude Code, Codex, Gemini, or your preferred coding agent:
+
+```text
+Inspect https://github.com/ellmos-ai/decision-clicker/blob/master/llms.txt and SKILL.md, clone the repository locally, install `decision-clicker` in a virtual environment (`python -m pip install .`), verify with `decision-clicker --help` and `decision-clicker --check --chain tests/data/chain`, and report the available CLI/proposal seams without modifying any live decision chain.
+```
+
 ---
 
 ## 7. Configuration & Environment
@@ -292,7 +300,7 @@ Remove `--dry-run` to append the entry directly to `TO-DECIDE-USER.txt`.
 ### Intake Legacy Inbox Decisions
 
 ```bash
-decision-clicker takeover
+decision-clicker intake
 ```
 
 Scans legacy desktop postboxes (`Desktop/TO-DECIDE-USER.txt`), validates formatting, and imports entries idempotently into the canonical chain.
@@ -300,6 +308,18 @@ Scans legacy desktop postboxes (`Desktop/TO-DECIDE-USER.txt`), validates formatt
 ---
 
 ## 9. HTTP Mini Server & Web UI
+
+### Visual UI Tour
+
+Rendered directly from the built-in zero-dependency loopback UI against the repository's synthetic fixture (`tests/data/chain`):
+
+| Overview Queue (`/`) | Single-Card Decision Click (`/klick`) |
+|---|---|
+| ![Decision Clicker Overview](README/screenshots/dashboard_overview.png) | ![Decision Clicker Click View](README/screenshots/klick_decision_view.png) |
+
+| New Proposal Form (`/neu`) |
+|---|
+| ![Decision Clicker New Proposal Form](README/screenshots/new_proposal_view.png) |
 
 The mini-server operates on `http://127.0.0.1:8096`:
 
@@ -361,26 +381,27 @@ from decision_clicker.api import DecisionClicker
 clicker = DecisionClicker(Path("C:/_Local_DEV/chains/_DECISIONS"))
 
 # 1. Inspect open decisions
-open_items = clicker.open_decisions()
+open_items = clicker.open_entries()
 print(f"Pending decisions: {len(open_items)}")
 
 for item in open_items:
-    print(f"[{item['id']}] {item['title']}")
-    for opt in item.get("options", []):
+    detail = clicker.detail(item["id"])
+    print(f"[{detail['id']}] {detail['title']}")
+    for opt in detail.get("optionen", []):
         print(f"  - Option {opt['letter']}: {opt['text']}")
 
 # 2. Record a human choice
 if open_items:
     target = open_items[0]
     clicker.decide(
-        key=target["key"],
+        key=target["id"],
         choice="A",
         note="Selected during automated system validation."
     )
     print(f"Decision recorded for {target['id']}.")
 
 # 3. Reversibly undo if required
-# clicker.undo(target["key"])
+# clicker.undo(target["id"])
 ```
 
 ---
@@ -428,7 +449,7 @@ All modifications undergo strict validation gates prior to release:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 syntax errors, valid bytecode across Python 3.10–3.13. |
 | **Linting & Quality** | `ruff check` | Entire repository | 0 linting warnings or style violations. |
-| **Unit & Integration** | `pytest` | `tests/` | 156 tests passed (100% green). |
+| **Unit & Integration** | `pytest` | `tests/` | 405 tests passed (100% green). |
 | **Metadata Parity** | `tests/test_metadata.py` | Badges, PEP 621, Invariants | Contract tests pass verifying docs, URLs, and SLAs. |
 | **Build & Packaging** | `python -m build` | Source & Wheel dists | Clean build of distributable `.tar.gz` and `.whl`. |
 
@@ -437,7 +458,7 @@ Execute the full suite locally:
 ```bash
 python -m compileall -q src tests
 python -m ruff check .
-python -m pytest -v
+python -m pytest -ra -v
 python -m build
 ```
 
@@ -445,12 +466,12 @@ python -m build
 
 ## 14. Machine-Readable LLM Context
 
-Autonomous LLM agents inspecting this repository should read [llms.txt](llms.txt) for machine-optimized code maps, governance invariant definitions, and deployment boundaries. Module manifest details are published in `ellmos-module.v2.json`.
+Autonomous LLM agents inspecting this repository should read [llms.txt](llms.txt) (with compatibility pointer [llm.txt](llm.txt)) and the product workflow skill [SKILL.md](SKILL.md) for machine-optimized code maps, governance invariant definitions, and deployment boundaries. Module manifest details are published in `ellmos-module.v2.json`.
 
 ---
 
 ## 15. Contributing & License
 
-Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md) before submitting patches.
+Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md) before submitting patches.
 
 Licensed under the **MIT License**. See [LICENSE](LICENSE) for full legal text. Third-party licenses and asset attestations are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
