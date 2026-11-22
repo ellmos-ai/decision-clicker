@@ -32,6 +32,8 @@ _local/
 *.swp
 *~
 *.log
+MARKETING-LOG.txt
+*MARKETING-LOG.txt
 
 # Multi-host sync conflicts (OneDrive / Syncthing / Cloud sync)
 *-conflict-*

@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions are welcome after the repository becomes public.
+Contributions are welcome! Please read the [Code of Conduct](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md) before opening a pull request.
 
 ## Local checks
 
