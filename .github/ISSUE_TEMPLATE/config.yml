@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Security Advisories
-    url: https://github.com/ellmos-ai/decision-clicker/security/advisories/new
-    about: Please report security vulnerabilities privately rather than in public issues.
+  - name: Security Policy
+    url: https://github.com/ellmos-ai/decision-clicker/blob/master/SECURITY.md
+    about: Never open a public issue for security vulnerabilities — follow the private reporting instructions in SECURITY.md.
   - name: Open-Bricks Ecosystem
     url: https://github.com/open-bricks
     about: Ecosystem standards, sibling tools, and cross-project governance.

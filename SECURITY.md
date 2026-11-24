@@ -18,12 +18,11 @@ Security fixes are prioritized for the latest minor release line on the default 
 
 ### Reporting a Vulnerability
 
-If you discover a security vulnerability, please do **NOT** open a public issue. Instead, report it privately via GitHub:
+If you discover a security vulnerability, please do **NOT** open a public issue. Instead, report it privately to the maintainer (`@lukisch` on GitHub) or via the security contacts below (GitHub Private Vulnerability Reporting under `/security/advisories` is currently disabled on this repository and will be used once enabled):
 
-- **GitHub Private Advisory:** [Report a Vulnerability](https://github.com/ellmos-ai/decision-clicker/security/advisories/new)
 - **Primary Security Contact:** `security@open-bricks.org`
 - **Organizational Security:** `security@ellmos.ai`
-- **Maintainer Escalation:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
+- **Maintainer Escalation:** `lukas@open-bricks.org` / `support@lukasgeiger.com` / GitHub `@lukisch` (private maintainer contact while PVR is disabled)
 
 We commit to an initial response acknowledging receipt within **48 hours**, a formal triage assessment within **5 business days**, and a targeted remediation plan or patch release within **30 calendar days**.
 
@@ -60,12 +59,11 @@ Sicherheitskorrekturen werden für die neueste Version auf dem Standard-Branch `
 
 ### Sicherheitslücke melden
 
-Bitte melden Sie Sicherheitslücken **niemals** über öffentliche GitHub Issues. Nutzen Sie stattdessen:
+Bitte melden Sie Sicherheitslücken **niemals** über öffentliche GitHub Issues. Melden Sie Schwachstellen stattdessen vertraulich an den Maintainer (`@lukisch` auf GitHub) oder über die untenstehenden Sicherheitskontakte (GitHub Private Vulnerability Reporting unter `/security/advisories` ist in diesem Repository derzeit noch deaktiviert und wird genutzt, sobald es aktiviert ist):
 
-- **GitHub Private Vulnerability Advisory:** [Sicherheitslücke privat melden](https://github.com/ellmos-ai/decision-clicker/security/advisories/new)
 - **Zentrale Sicherheit:** `security@open-bricks.org`
 - **Organisationskontakt:** `security@ellmos.ai`
-- **Maintainer:** `lukas@open-bricks.org` / `support@lukasgeiger.com`
+- **Maintainer:** `lukas@open-bricks.org` / `support@lukasgeiger.com` / GitHub `@lukisch` (vertraulicher Maintainer-Kontakt solange PVR deaktiviert ist)
 
 Wir garantieren eine Eingangsbestätigung innerhalb von **48 Stunden**, eine fundierte Triage-Rückmeldung innerhalb von **5 Werktagen** sowie einen verbindlichen Behebungsplan bzw. Patch-Release innerhalb von **30 Kalendertagen**.
 

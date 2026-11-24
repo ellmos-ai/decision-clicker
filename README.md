@@ -6,7 +6,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-405%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-409%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
@@ -18,7 +18,7 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--15-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--24-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker is a local-first Python library, CLI tool, and lightweight web UI for file-based human-in-the-loop decision chains. It provides human operators and autonomous agent fleets with a bulletproof, deterministic workflow to queue, review, record, audit, and reversibly undo governance decisions without moving the source of truth into an external database.
@@ -287,7 +287,7 @@ Binds to `127.0.0.1:8096` and opens your default browser. On Windows, `START.bat
 
 ```bash
 decision-clicker add "Rollout Strategy Selection" \
-  --frage "Which deployment pattern should be used for v1.1.1?" \
+  --frage "Which deployment pattern should be used for v1.1.2?" \
   --option "A — Blue/Green with immediate traffic switch" \
   --option "B — Canary staged release over 48 hours" \
   --empfehlung "B — Canary provides automated rollback" \
@@ -304,6 +304,15 @@ decision-clicker intake
 ```
 
 Scans legacy desktop postboxes (`Desktop/TO-DECIDE-USER.txt`), validates formatting, and imports entries idempotently into the canonical chain.
+
+### Sync Chain Index Tools & Inspect Polaris Journals
+
+```bash
+decision-clicker chain-tools --check
+decision-clicker polaris journal list
+```
+
+Verifies whether `<chain>/_tools/` matches the packaged `decisions_index.py`/`decisions_db.py` adapters (`--force` updates them) and lists any open Polaris transaction journals read-only (`docs/POLARIS.md`).
 
 ---
 
@@ -449,7 +458,7 @@ All modifications undergo strict validation gates prior to release:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 syntax errors, valid bytecode across Python 3.10–3.13. |
 | **Linting & Quality** | `ruff check` | Entire repository | 0 linting warnings or style violations. |
-| **Unit & Integration** | `pytest` | `tests/` | 405 tests passed (100% green). |
+| **Unit & Integration** | `pytest` | `tests/` | 409 tests passed (100% green). |
 | **Metadata Parity** | `tests/test_metadata.py` | Badges, PEP 621, Invariants | Contract tests pass verifying docs, URLs, and SLAs. |
 | **Build & Packaging** | `python -m build` | Source & Wheel dists | Clean build of distributable `.tar.gz` and `.whl`. |
 

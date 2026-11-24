@@ -37,6 +37,7 @@ def test_pep621_project_urls():
         "Repository",
         "Documentation",
         "Changelog",
+        "Contributing",
         "Security",
         "Issues",
         "Third-Party Licenses",
@@ -149,7 +150,7 @@ def test_readme_badges_suite():
     expected_badges = [
         "version-1.1.2-blue.svg",
         "CI-passing-brightgreen.svg",
-        "tests-405%20passed%20%7C%20100%25-brightgreen.svg",
+        "tests-409%20passed%20%7C%20100%25-brightgreen.svg",
         "privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg",
         "security-RunAsInvoker%20%7C%20Non--Elevation-blue.svg",
         "security--SLA-48h%20Response%20%7C%205d%20Triage%20%7C%2030d%20Fix-informational.svg",
@@ -159,7 +160,7 @@ def test_readme_badges_suite():
         "ecosystem-ellmos--ai-purple.svg",
         "umbrella-open--bricks-orange.svg",
         "LLM-llms.txt-blueviolet.svg",
-        "last%20checked-2026--11--15-informational.svg",
+        "last%20checked-2026--11--24-informational.svg",
         "license-MIT-green.svg",
     ]
     for badge in expected_badges:
@@ -223,7 +224,8 @@ def test_sibling_ecosystem_matrix():
 def test_llms_txt_freshness_and_parity():
     """Verify llms.txt is up to date with version 1.1.2 and recent timestamp."""
     llms_text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-    assert "2026-11-15" in llms_text
+    assert "2026-11-24" in llms_text
+    assert "409 passed" in llms_text
     assert "1.1.2" in llms_text
     assert "decision_clicker/api.py" in llms_text
     assert "decision_clicker/writer.py" in llms_text
@@ -533,3 +535,72 @@ def test_extended_gitignore_sync_and_lock_defense():
     ]
     for pattern in extra_patterns:
         assert pattern in content, f"Missing extended pattern in .gitignore: {pattern}"
+
+
+def test_pytest_no_relative_basetemp_and_norecursedirs():
+    """Enforce T-20261114-932985855: never put relative --basetemp in addopts; ignore .pytest_temp."""
+    pyproject = _read_toml()
+    pytest_opts = pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {})
+    addopts = pytest_opts.get("addopts", "")
+    assert "--basetemp" not in addopts, "Relative --basetemp in addopts resolves against CWD"
+    assert "--strict-markers" in addopts
+    assert pytest_opts.get("xfail_strict") is True
+    norecursedirs = pytest_opts.get("norecursedirs", [])
+    assert ".pytest_temp" in norecursedirs
+    assert ".pytest_tmp" in norecursedirs
+
+    assert not (ROOT / "pytest.ini").exists(), "Unexpected pytest.ini outside pyproject.toml"
+
+    gitignore_text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert ".pytest_temp/" in gitignore_text
+    assert ".pytest_tmp/" in gitignore_text
+
+
+def test_ci_packaging_and_codeql_hardening():
+    """Verify CI runs pip check, dry-run build, dist verification, CodeQL concurrency, and Dependabot."""
+    ci_text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for snippet in (
+        "python -m pip check",
+        "python -m pip install --no-build-isolation --dry-run .",
+        "python -m build",
+        "THIRD_PARTY_LICENSES.md",
+    ):
+        assert snippet in ci_text, f"Missing CI hardening step: {snippet}"
+
+    codeql_text = (ROOT / ".github" / "workflows" / "codeql.yml").read_text(encoding="utf-8")
+    assert "cancel-in-progress: true" in codeql_text
+    assert "timeout-minutes: 15" in codeql_text
+
+    dependabot_path = ROOT / ".github" / "dependabot.yml"
+    assert dependabot_path.is_file(), ".github/dependabot.yml must exist"
+    dep_text = dependabot_path.read_text(encoding="utf-8")
+    assert 'package-ecosystem: "github-actions"' in dep_text
+    assert 'package-ecosystem: "pip"' in dep_text
+
+
+def test_issue_template_and_contributing_hygiene():
+    """Verify ISSUE_TEMPLATE config avoids disabled PVR links and CONTRIBUTING reflects public status."""
+    config_text = (ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text(encoding="utf-8")
+    assert "/security/advisories/new" not in config_text, "Avoid dead /security/advisories/new link while PVR is off"
+    assert "SECURITY.md" in config_text
+
+    sec_text = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    assert "/security/advisories/new" not in sec_text
+
+    contrib_text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "after the repository becomes public" not in contrib_text
+    assert "## English" in contrib_text and "## Deutsch" in contrib_text
+
+
+def test_bilingual_docs_version_and_cli_parity():
+    """Verify READMEs reflect current version 1.1.2 and document all CLI subcommands."""
+    pyproject = _read_toml()
+    version = pyproject["project"]["version"]
+    assert version == __version__ == "1.1.2"
+
+    for rel in ("README.md", "README_de.md", "README.de.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "v1.1.1" not in text, f"Stale v1.1.1 example found in {rel}"
+        assert f"v{version}" in text, f"Expected v{version} example in {rel}"
+        assert "chain-tools --check" in text, f"Missing chain-tools CLI docs in {rel}"
+        assert "polaris journal list" in text, f"Missing polaris journal CLI docs in {rel}"

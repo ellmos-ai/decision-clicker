@@ -10,7 +10,7 @@ dependencies = []
 authors = [
   { name = "Lukas Geiger" },
 ]
-keywords = ["decisions", "governance", "local-first", "audit-log"]
+keywords = ["decisions", "governance", "local-first", "audit-log", "cli", "human-in-the-loop"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
@@ -32,6 +32,7 @@ Homepage = "https://github.com/ellmos-ai/decision-clicker"
 Repository = "https://github.com/ellmos-ai/decision-clicker"
 Documentation = "https://github.com/ellmos-ai/decision-clicker#readme"
 Changelog = "https://github.com/ellmos-ai/decision-clicker/blob/master/CHANGELOG.md"
+Contributing = "https://github.com/ellmos-ai/decision-clicker/blob/master/CONTRIBUTING.md"
 Security = "https://github.com/ellmos-ai/decision-clicker/blob/master/SECURITY.md"
 Issues = "https://github.com/ellmos-ai/decision-clicker/issues"
 "Third-Party Licenses" = "https://github.com/ellmos-ai/decision-clicker/blob/master/THIRD_PARTY_LICENSES.md"
@@ -62,7 +63,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-ra -v"
+addopts = "-ra -v --strict-markers"
+xfail_strict = true
+norecursedirs = [".git", ".venv", "venv", ".pytest_temp", ".pytest_tmp", "build", "dist", "*.egg-info"]
 
 [tool.ruff]
 target-version = "py310"
