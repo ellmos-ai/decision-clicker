@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest_temp/
+.pytest_tmp/
 .ruff_cache/
 .mypy_cache/
 .hypothesis/
@@ -32,6 +34,10 @@ _local/
 *.swp
 *~
 *.log
+*.db
+*.sqlite*
+*.dump
+data/temp/
 MARKETING-LOG.txt
 *MARKETING-LOG.txt
 

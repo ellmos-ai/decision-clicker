@@ -30,6 +30,10 @@ jobs:
           cache: pip
       - name: Install development dependencies
         run: python -m pip install -e ".[dev]"
+      - name: Dependency consistency check
+        run: python -m pip check
+      - name: Non-isolated packaging dry-run
+        run: python -m pip install --no-build-isolation --dry-run .
       - name: Bytecode compilation
         run: python -m compileall -q src tests
       - name: Lint
@@ -38,3 +42,6 @@ jobs:
         run: python -m pytest -ra -v
       - name: Build distributions
         run: python -m build
+      - name: Verify built distributions
+        run: |
+          python -c "import glob, tarfile, zipfile; sdist = glob.glob('dist/*.tar.gz')[0]; wheel = glob.glob('dist/*.whl')[0]; snames = tarfile.open(sdist).getnames(); wnames = zipfile.ZipFile(wheel).namelist(); all_names = set(snames) | set(wnames); assert not any('MARKETING-LOG.txt' in n or 'postfach_2026-08-07.txt' in n or 'LOCK' in n.split('/')[-1] for n in all_names), 'Forbidden file in dist'; assert any(n.endswith('LICENSE') for n in snames); assert any(n.endswith('THIRD_PARTY_LICENSES.md') for n in snames); print('dist OK:', len(snames), 'sdist,', len(wnames), 'wheel')"

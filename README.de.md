@@ -6,7 +6,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-405%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-409%20passed%20%7C%20100%25-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](pyproject.toml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25%20Local--First%20%7C%20Zero--Egress-success.svg)](SECURITY.md)
@@ -18,7 +18,7 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-ellmos--ai-purple.svg)](https://github.com/ellmos-ai)
 [![Umbrella](https://img.shields.io/badge/umbrella-open--bricks-orange.svg)](https://github.com/open-bricks)
 [![LLM Ready](https://img.shields.io/badge/LLM-llms.txt-blueviolet.svg)](llms.txt)
-[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--15-informational.svg)](CHANGELOG.md)
+[![Last Checked](https://img.shields.io/badge/last%20checked-2026--11--24-informational.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Decision Clicker ist eine Local-First Python-Bibliothek, ein CLI-Tool und eine leichtgewichtige Web-Oberfläche für dateibasierte Human-in-the-Loop Entscheidungsketten. Sie bietet menschlichen Bedienern und autonomen Agenten-Flotten einen deterministischen, fehlertoleranten Arbeitsablauf zur Einstellung, Prüfung, Dokumentation, Revision und reversiblen Rücknahme von Governance-Entscheidungen – ohne Notwendigkeit einer zentralen Datenbank.
@@ -287,7 +287,7 @@ Startet den Miniserver auf `127.0.0.1:8096` und öffnet die UI im Standard-Brows
 
 ```bash
 decision-clicker add "Auswahl der Rollout-Strategie" \
-  --frage "Welches Rollout-Muster soll für v1.1.1 verwendet werden?" \
+  --frage "Welches Rollout-Muster soll für v1.1.2 verwendet werden?" \
   --option "A — Blue/Green mit sofortiger Verkehrsumschaltung" \
   --option "B — Canary-Rollout gestaffelt über 48 Stunden" \
   --empfehlung "B — Canary ermöglicht automatischen Rollback" \
@@ -304,6 +304,15 @@ decision-clicker intake
 ```
 
 Liest Einträge aus dem Desktop-Postfach ein und überführt sie idempotent in die kanonische Kette.
+
+### Ketten-Werkzeuge prüfen & Polaris-Journale einsehen
+
+```bash
+decision-clicker chain-tools --check
+decision-clicker polaris journal list
+```
+
+Prüft, ob `<kette>/_tools/` dem Paketstand von `decisions_index.py`/`decisions_db.py` entspricht (`--force` aktualisiert), und listet offene Polaris-Transaktionsjournale read-only auf (`docs/POLARIS.md`).
 
 ---
 
@@ -449,7 +458,7 @@ Vor jedem Release durchläuft Decision Clicker strenge Prüfungen:
 |---|---|---|---|
 | **Syntax & Bytecode** | `python -m compileall` | `src/`, `tests/` | 0 Syntaxfehler unter Python 3.10–3.13. |
 | **Linting & Stil** | `ruff check` | Gesamtes Repository | 0 Warnungen, vollständige PEP 8 Konformität. |
-| **Unit & Integration** | `pytest` | `tests/` | 405 bestandene Tests (100% grün). |
+| **Unit & Integration** | `pytest` | `tests/` | 409 bestandene Tests (100% grün). |
 | **Metadaten-Parität** | `tests/test_metadata.py` | Badges, PEP 621, Invarianten | Vertragstests verifizieren Dokumentation und SLAs. |
 | **Paketierung** | `python -m build` | Quell- & Wheel-Paket | Saubere Erstellung ohne Fehler. |
 
